@@ -1,0 +1,79 @@
+name: Docker
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_FROZEN: "1"
+  UV_LINK_MODE: symlink
+  UV_PYTHON: "3.12.12"
+
+jobs:
+  base-image:
+    name: Base Image
+    runs-on: ubuntu-latest
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: astral-sh/setup-uv@v5
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        if: github.event_name == 'release'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=ref,event=tag
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+      - name: Build base image
+        id: build
+        env:
+          NOMAD_IMAGE_LABELS: ${{ steps.meta.outputs.labels }}
+          NOMAD_IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+          NOMAD_PLATFORMS: linux/amd64,linux/arm64
+          NOMAD_PROVENANCE: ${{ github.event_name == 'release' && '1' || '0' }}
+          NOMAD_PUSH: ${{ github.event_name == 'release' && '1' || '0' }}
+        run: ./container/build_base_docker.sh
+      - name: Resolve image digest
+        id: digest
+        if: github.event_name == 'release'
+        run: |
+          digest="$(docker buildx imagetools inspect \
+            "${{ steps.build.outputs.image }}" \
+            | awk '/^Digest:/ {print $2; exit}')"
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+      - name: Attest image provenance
+        if: github.event_name == 'release'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ steps.build.outputs.image }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          push-to-registry: true

@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+*.sql
+.ipynb_checkpoints/
+.venv
+docs/reference/generated/
+
+# Directory with pretrained/finetuned MIST models
+models
+*.tar
+*.tar.gz
+
+# Ursa
+ursa_metrics/
+ursa_workspace/
+
+# secrets
+.env

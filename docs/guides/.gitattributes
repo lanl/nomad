@@ -1,0 +1,2 @@
+angled_full_res.h5 filter=lfs diff=lfs merge=lfs -text
+angled_half_res.h5 filter=lfs diff=lfs merge=lfs -text

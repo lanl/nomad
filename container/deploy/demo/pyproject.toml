@@ -1,0 +1,35 @@
+[project]
+name = "nomad-demo-server"
+version = "0.1.0"
+description = "Public demo Nomad server environment"
+requires-python = ">=3.12"
+dependencies = [
+    "nomad",
+    "openbabel-wheel>=3.1.1.22",
+    "pubchempy>=1.0.5",
+    "safetensors>=0.4",
+    "scikit-learn>=1.9.0",
+    "smirk>=0.1.0",
+    "transformers",
+    "datasets",
+    "huggingface-hub",
+    "numpy",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv.sources]
+nomad = { path = "../../../", editable = true }
+
+[tool.uv]
+override-dependencies = [
+    "nomad",
+]
+
+[tool.uv.pip]
+torch-backend = "auto"

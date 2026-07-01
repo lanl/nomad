@@ -1,0 +1,28 @@
+tool_manager:
+  enabled: true
+  idle_seconds: 120
+  max_pending_per_tool: 50000
+search_tool:
+  expose: true
+tools:
+  - nomad_demo.pubchem.search_pubchem
+fmod_models:
+  - model_class: nomad_demo.mist.FinetunedMistModel
+    name_or_path: mist-models/mist-26.9M-kkgx0omx-qm9
+    batch_size: 16
+  - model_class: nomad_demo.mist.FinetunedMistModel
+    name_or_path: mist-models/mist-26.9M-48kpooqf-odour
+    batch_size: 16
+  - model_class: nomad_demo.mist.FinetunedMistModel
+    name_or_path: mist-models/mist-26.9M-6hk5coof-dn
+    batch_size: 16
+  - model_class: nomad_demo.mist.FinetunedMistModel
+    name_or_path: mist-models/mist-26.9M-y3ge5pf9-mp
+    batch_size: 16
+  - model_class: nomad_demo.mist.FinetunedMistModel
+    name_or_path: mist-models/mist-26.9M-b302p09x-bp
+    batch_size: 16
+  - model_class: nomad_demo.diffunet2.DiffUnet2
+    name_or_path: 90879c/Janus-first2last
+    tool_name: diffunet2_heat_pli_f2l
+    batch_size: 1
