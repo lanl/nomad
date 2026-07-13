@@ -61,10 +61,6 @@ exclude_patterns = [
     "**/.venv/**",
     "reference/generated/**",
 ]
-_is_markdown_build = "-b" in sys.argv and "markdown" in sys.argv
-_is_ci_build = os.environ.get("CI", "").lower() == "true"
-if _is_markdown_build:
-    exclude_patterns.append("reference/cli.rst")
 
 source_suffix = {
     ".rst": "restructuredtext",
@@ -104,11 +100,11 @@ intersphinx_mapping = {
         None,
     ),
     "pydantic": (
-        "https://docs.pydantic.dev/latest/",
+        "https://pydantic.dev/docs/validation/latest/",
         None,
     ),
     "torch": (
-        "https://pytorch.org/docs/stable/",
+        "https://docs.pytorch.org/docs/stable/",
         None,
     ),
 }
@@ -168,8 +164,8 @@ viewcode_line_numbers = True
 
 # -- MyST-NB -----------------------------------------------------------------
 nb_execution_in_temp = False
-nb_execution_mode = "off" if _is_markdown_build or _is_ci_build else "force"
-nb_execution_timeout = 300
+nb_execution_mode = "cache"
+nb_execution_timeout = 600
 nb_render_markdown_format = "myst"
 myst_enable_extensions = [
     "fieldlist",
