@@ -26,6 +26,11 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
           cache-suffix: docs
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/nomad
+          key: nomad-cache-${{ hashFiles('./container/*/nomad.yml', './container/*/uv.lock') }}
+          restore-key: nomad-cache
       - name: Build docs
         run: uv run --group dev --group docs just docs
       - name: Upload docs artifact

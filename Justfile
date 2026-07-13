@@ -17,6 +17,7 @@ build-image:
 
 [arg("live", long="live", value="true")]
 docs live="false":
+    uv sync --directory ./container/demo
     if [ "{{ live }}" = "true" ]; then \
         make -C docs livehtml; \
     else \
