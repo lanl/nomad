@@ -24,7 +24,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.uv.sources]
-nomad = { path = "../../../", editable = true }
+nomad = { path = "../..", editable = true }
 
 [tool.uv]
 override-dependencies = [

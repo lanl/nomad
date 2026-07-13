@@ -6,7 +6,7 @@ For rules and constraints, read {doc}`Deployment Specification <deployment-spec>
 ## Running Nomad in a Container
 
 Public pre-built deployment images are not currently published.
-Build a deployment image locally, or push one to a registry you control, before
+Build the demo image locally, or push it to a registry you control, before
 using the examples below. The examples use `nomad-demo:latest` as the image
 name.
 Depending on what the server is configured to serve, the [Git credentials mount](#passing-git-credentials-to-the-image) may be optional.
@@ -202,86 +202,31 @@ The mounted file must be a complete CA bundle, not just the additional corporate
 (building-the-image)=
 ## Building the Image
 
-The base image defaults to `nomad:latest` and contains only Nomad, not deployment dependencies, config, or weights.
-Deployment images default to `NOMAD_BASE_IMAGE=nomad:latest` and `NOMAD_DEPLOY=demo`.
-
-| Setting | Purpose |
-| --- | --- |
-| `NOMAD_BASE_IMAGE` | Base image used for the deployment image. |
-| `NOMAD_DEPLOY` | Deployment profile under `container/deploy/`; defaults to `demo`. |
-| `NOMAD_INCLUDE_WEIGHTS=1` | Export configured model assets and include them in the deployment build context. |
-| `NOMAD_EXPORT_TARGET` | Export destination for included weights; defaults to `disk`. Set to `oras` to push model weights to an ORAS registry and rewrite `nomad.yml` to `oras://` URIs. |
-| `NOMAD_ORAS_REGISTRY` | Existing ORAS artifact repository used when `NOMAD_EXPORT_TARGET=oras`. |
-| `NOMAD_AUTH_FILE` | Docker-compatible auth file for ORAS credentials when they are outside the default Docker config. |
-| `NOMAD_PLATFORMS` | Platform or comma-separated platforms to build. |
-| `NOMAD_PUSH=1` | Push the resulting image to a registry. |
-
-::::{tab-set}
-
-:::{tab-item} Docker
-Run {repo_file}`./container/build_base_docker.sh` to build the base Nomad image, then run {repo_file}`./container/deploy/build_docker.sh` to build a deployment image with [Docker](https://docs.docker.com/build/).
-By default, this builds the current platform and loads the image into the local Docker daemon.
-
-The base image defaults to `nomad:latest` and contains only Nomad, not deployment dependencies, config, or weights.
-Deployment images default to `NOMAD_BASE_IMAGE=nomad:latest` and `NOMAD_DEPLOY=demo`.
-Set `NOMAD_INCLUDE_WEIGHTS=1` to export configured model assets with `nomad export --to disk` and copy them into the deployment image; the default is to include only `nomad.yml`. Set `NOMAD_EXPORT_TARGET` only when you intentionally want a different export mode.
-
-Use `NOMAD_PLATFORMS` to choose the platform or platforms to build:
+Use the `build-image` recipe to build {repo_file}`container/demo/Dockerfile`
+for the current platform and tag it as `nomad-demo:latest`:
 
 ```shell
-./container/build_base_docker.sh
-NOMAD_PLATFORMS=linux/arm64 ./container/deploy/build_docker.sh
+just build-image
 ```
 
-Use comma-separated platforms for a multi-arch image.
-Multi-arch Docker builds require `NOMAD_PUSH=1`, because Docker cannot load a multi-platform manifest into the local daemon:
+The recipe runs this Docker command:
 
 ```shell
-NOMAD_IMAGE=registry.example.com/nomad-demo:latest \
-NOMAD_PLATFORMS=linux/amd64,linux/arm64 \
-NOMAD_PUSH=1 \
-./container/deploy/build_docker.sh
+docker buildx build \
+  --tag nomad-demo:latest \
+  --file container/demo/Dockerfile \
+  .
 ```
 
-Set `NOMAD_PUSH=1` to push the image to a registry:
+To publish a multi-platform image, specify the target platforms, registry tag,
+and `--push`. Docker cannot load a multi-platform image into the local image
+store:
 
 ```shell
-NOMAD_IMAGE=registry.example.com/nomad-demo:latest \
-NOMAD_PUSH=1 \
-./container/deploy/build_docker.sh
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --tag registry.example.com/nomad-demo:latest \
+  --push \
+  --file container/demo/Dockerfile \
+  .
 ```
-:::
-
-:::{tab-item} Buildah
-Run {repo_file}`./container/build_base_buildah.sh` to build the base Nomad image, then run {repo_file}`./container/deploy/build_buildah.sh` to build a deployment image with [Buildah](https://buildah.io/).
-By default, this builds the current platform as a local image.
-
-The base image defaults to `nomad:latest` and contains only Nomad, not deployment dependencies, config, or weights.
-Deployment images default to `NOMAD_BASE_IMAGE=nomad:latest` and `NOMAD_DEPLOY=demo`.
-Set `NOMAD_INCLUDE_WEIGHTS=1` to export configured model assets with `nomad export --to disk` and copy them into the deployment image; the default is to include only `nomad.yml`. Set `NOMAD_EXPORT_TARGET` only when you intentionally want a different export mode.
-
-Use `NOMAD_PLATFORMS` to choose the platform or platforms to build:
-
-```shell
-./container/build_base_buildah.sh
-NOMAD_PLATFORMS=linux/arm64 ./container/deploy/build_buildah.sh
-```
-
-Use comma-separated platforms for a multi-arch image:
-
-```shell
-NOMAD_IMAGE=registry.example.com/nomad-demo:latest \
-NOMAD_PLATFORMS=linux/amd64,linux/arm64 \
-./container/deploy/build_buildah.sh
-```
-
-Set `NOMAD_PUSH=1` to push the image to a registry:
-
-```shell
-NOMAD_IMAGE=registry.example.com/nomad-demo:latest \
-NOMAD_PUSH=1 \
-./container/deploy/build_buildah.sh
-```
-:::
-
-::::
