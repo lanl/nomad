@@ -46,8 +46,8 @@ COPY container/demo ./container/demo
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --directory ./container/demo --locked --no-editable \
-    && ln -sf ./container/demo/.venv/bin/nomad /usr/local/bin/
+    && ln -sf $(realpath ./container/demo/.venv/bin/nomad) /usr/local/bin/
 
 EXPOSE 38217
 ENTRYPOINT ["nomad"]
-CMD ["serve", "--transport=streamable-http", "--port=38217", "/nomad/nomad.yml"]
+CMD ["serve", "--transport=streamable-http", "--host=0.0.0.0", "--port=38217", "/nomad/container/demo/nomad.yml"]

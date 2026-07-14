@@ -22,6 +22,7 @@ jobs:
       packages: write
     steps:
       - name: Free Disk Space (Ubuntu)
+        if: ${{ !env.ACT }}
         uses: jlumbroso/free-disk-space@v1.3.1
         with:
           tool-cache: true
@@ -42,20 +43,48 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "release" ]]; then
             image="ghcr.io/${{ github.repository }}:${{ github.event.release.tag_name }}"
+            platforms="linux/amd64,linux/arm64"
             output="--push"
           else
             image="nomad-demo:ci"
-            output="--output=type=cacheonly"
+            platforms="linux/amd64"
+            output="--load"
+          fi
+          cache=()
+          if [[ "${ACT:-}" != "true" ]]; then
+            cache=(
+              --cache-from type=gha,scope=demo-image
+              --cache-to type=gha,scope=demo-image,mode=max
+            )
           fi
           docker buildx build \
             --tag "${image}" \
-            --platform linux/amd64,linux/arm64 \
-            --cache-from type=gha,scope=demo-image \
-            --cache-to type=gha,scope=demo-image,mode=max \
+            --platform "${platforms}" \
+            "${cache[@]}" \
             --file container/demo/Dockerfile \
             "${output}" \
             .
           echo "image=${image}" >> "${GITHUB_OUTPUT}"
+      - name: Smoke test demo image
+        run: |
+          container="nomad-demo-smoke"
+          trap 'docker logs "${container}"; docker rm --force "${container}"' EXIT
+          docker run --detach \
+            --name "${container}" \
+            --publish 38217:38217 \
+            "${{ steps.build.outputs.image }}"
+
+          for attempt in {1..60}; do
+            if curl --silent --output /dev/null http://127.0.0.1:38217/mcp; then
+              exit 0
+            fi
+            if [[ "$(docker inspect --format '{{.State.Running}}' "${container}")" != "true" ]]; then
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "Server did not start within 5 minutes" >&2
+          exit 1
       - name: Resolve image digest
         id: digest
         if: github.event_name == 'release'
@@ -68,6 +97,6 @@ jobs:
         if: github.event_name == 'release'
         uses: actions/attest-build-provenance@v2
         with:
-          subject-name: ${{ steps.build.outputs.image }}
+          subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.digest.outputs.digest }}
           push-to-registry: true
