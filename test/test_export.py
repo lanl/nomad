@@ -8,7 +8,7 @@ import yaml
 
 from nomad import export as nomad_export
 from nomad import hub
-from nomad.export import ExportTarget, export_models_config
+from nomad.export import ExportTarget, export_model_report, export_models_config
 
 
 def test_export_models_config_https_rewrites_git_sources_and_normalizes_hf(
@@ -225,3 +225,68 @@ def test_export_models_config_oras_requires_registry(tmp_path: Path):
             tmp_path / "bundle",
             to=ExportTarget.ORAS,
         )
+
+
+def test_export_model_report_writes_cards_and_linked_descriptions(
+    monkeypatch, tmp_path: Path
+):
+    config_path = tmp_path / "nomad.yml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "tool_manager: {enabled: true}",
+                "tools: []",
+                "fmod_models:",
+                "  - model_class: tests.DummyModel",
+                "    name_or_path: org/model-one",
+                "    tool_name: model-one",
+                "  - model_class: tests.DummyModel",
+                "    name_or_path: org/model-two",
+                "    tool_name: model-two",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cards = {
+        "model-one": "# Model One\n\nFirst card.\n",
+        "model-two": "# Model Two\n\nSecond card.\n",
+    }
+
+    class DummyTool:
+        def __init__(self, name: str):
+            self.name = name
+            self.description = f"Description for {name}."
+
+    def fake_build_tool(self, fm_config):
+        return DummyTool(fm_config.tool_name)
+
+    def fake_resolve_source(self, *, base_dir=None):
+        return tmp_path / self.tool_name
+
+    def fake_read_model_card(self, tool_name):
+        return cards[tool_name]
+
+    monkeypatch.setattr("nomad.config.ServerConfig.build_tool", fake_build_tool)
+    monkeypatch.setattr(
+        "nomad.config.TorchModuleConfig.resolve_source", fake_resolve_source
+    )
+    monkeypatch.setattr(
+        "nomad.export.ModelCardLocator.read_model_card", fake_read_model_card
+    )
+
+    readme = export_model_report(config_path, tmp_path / "report")
+
+    assert (tmp_path / "report" / "model-one.md").read_text() == cards["model-one"]
+    assert (tmp_path / "report" / "model-two.md").read_text() == cards["model-two"]
+    assert readme.read_text() == (
+        "# Nomad Model Report\n"
+        "\n"
+        "## [model-one](model-one.md)\n"
+        "\n"
+        "Description for model-one.\n"
+        "\n"
+        "## [model-two](model-two.md)\n"
+        "\n"
+        "Description for model-two.\n"
+    )

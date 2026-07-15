@@ -379,6 +379,34 @@ def test_nomad_cli_export_accepts_targets(
     }
 
 
+def test_nomad_cli_export_report(monkeypatch, tmp_path: Path):
+    config_path = tmp_path / "nomad.yml"
+    config_path.write_text(
+        "tool_manager: {enabled: true}\ntools: []\nfmod_models: []\n"
+    )
+    output_dir = tmp_path / "report"
+    called = []
+
+    monkeypatch.setattr(
+        nomad_export,
+        "export_model_report",
+        lambda config, output: called.append((config, output)),
+    )
+    monkeypatch.setattr(
+        nomad_export,
+        "export_models_config",
+        lambda *args, **kwargs: pytest.fail("deployment export should not run"),
+    )
+
+    result = CliRunner().invoke(
+        nomad_cli.app,
+        ["export", "--report", str(config_path), str(output_dir)],
+    )
+
+    assert result.exit_code == 0
+    assert called == [(config_path, output_dir)]
+
+
 def test_nomad_cli_serve_registers_resolved_model_card_source(
     monkeypatch, tmp_path: Path
 ):

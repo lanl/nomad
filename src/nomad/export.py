@@ -17,6 +17,7 @@ from nomad.common.name_sanitize import sanitize_export_name, sanitize_mcp_name
 from nomad.config import ServerConfig
 from nomad.hub import RepoSpec
 from nomad.logging_utils import configure_root_logging, parse_log_level
+from nomad.model_cards import ModelCardLocator
 
 LogLevelName = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 LOGGER = logging.getLogger(__name__)
@@ -302,6 +303,45 @@ def export_models_config(
     return config_output
 
 
+def export_model_report(config_path: Path, output_dir: Path) -> Path:
+    """Export model cards and a linked index of configured model tools."""
+    config_path = config_path.expanduser()
+    config = ServerConfig.from_file(config_path)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    locator = ModelCardLocator()
+    report_entries: list[tuple[str, str, Path]] = []
+    used_names: set[str] = set()
+
+    for fm_config in config.fmod_models:
+        tool = config.build_tool(fm_config)
+        assert tool.name is not None
+        if tool.name in used_names:
+            raise ValueError(f"Duplicate model tool name '{tool.name}' in report")
+        used_names.add(tool.name)
+
+        source = fm_config.resolve_source(base_dir=config.context_dir)
+        locator.register(tool.name, source)
+        card_path = output_dir / f"{tool.name}.md"
+        card_path.write_text(locator.read_model_card(tool.name), encoding="utf-8")
+        report_entries.append((tool.name, tool.description, card_path))
+
+    lines = ["# Nomad Model Report"]
+    for tool_name, description, card_path in report_entries:
+        lines.extend(
+            [
+                "",
+                f"## [{tool_name}]({card_path.name})",
+                "",
+                description,
+            ]
+        )
+
+    readme = output_dir / "README.md"
+    readme.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return readme
+
+
 def export(
     config: Annotated[
         Path,
@@ -356,6 +396,13 @@ def export(
             "--pin/--no-pin", help="Pin exported sources to a resolved reference"
         ),
     ] = True,
+    report: Annotated[
+        bool,
+        typer.Option(
+            "--report",
+            help="Export model cards and a linked README instead of a deployment bundle.",
+        ),
+    ] = False,
 ):
     """Create a deployment bundle from a Nomad config.
 
@@ -369,9 +416,12 @@ def export(
     configure_root_logging(stderr_level=numeric_level)
     LOGGER.setLevel(numeric_level)
     try:
-        export_models_config(
-            config, output, to=to, oras_registry=oras_registry, pin=pin
-        )
+        if report:
+            export_model_report(config, output)
+        else:
+            export_models_config(
+                config, output, to=to, oras_registry=oras_registry, pin=pin
+            )
     except ConfigError as exc:
         raise click.ClickException(f"Failed to load config: {exc}") from exc
     except ValueError as exc:
