@@ -235,7 +235,9 @@ def test_export_model_report_writes_cards_and_linked_descriptions(
         "\n".join(
             [
                 "tool_manager: {enabled: true}",
-                "tools: []",
+                "tools:",
+                "  - tool: tests.regular_report_tool",
+                "    name: regular-tool",
                 "fmod_models:",
                 "  - model_class: tests.DummyModel",
                 "    name_or_path: org/model-one",
@@ -267,6 +269,13 @@ def test_export_model_report_writes_cards_and_linked_descriptions(
     def fake_read_model_card(self, tool_name):
         return cards[tool_name]
 
+    def regular_report_tool():
+        """Describe the regular tool."""
+
+    monkeypatch.setattr(
+        "nomad.config.ToolConfig.fn", property(lambda self: regular_report_tool)
+    )
+
     monkeypatch.setattr("nomad.config.ServerConfig.build_tool", fake_build_tool)
     monkeypatch.setattr(
         "nomad.config.TorchModuleConfig.resolve_source", fake_resolve_source
@@ -280,13 +289,21 @@ def test_export_model_report_writes_cards_and_linked_descriptions(
     assert (tmp_path / "report" / "model-one.md").read_text() == cards["model-one"]
     assert (tmp_path / "report" / "model-two.md").read_text() == cards["model-two"]
     assert readme.read_text() == (
-        "# Nomad Model Report\n"
+        "# Nomad Tool Report\n"
         "\n"
-        "## [model-one](model-one.md)\n"
+        "## SciFM Tools\n"
+        "\n"
+        "### [model-one](model-one.md)\n"
         "\n"
         "Description for model-one.\n"
         "\n"
-        "## [model-two](model-two.md)\n"
+        "### [model-two](model-two.md)\n"
         "\n"
         "Description for model-two.\n"
+        "\n"
+        "## Other Tools\n"
+        "\n"
+        "### regular-tool\n"
+        "\n"
+        "Describe the regular tool.\n"
     )

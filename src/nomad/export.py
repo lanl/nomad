@@ -11,6 +11,7 @@ from uuid import uuid4
 import click
 import typer
 import yaml
+from fastmcp.tools import Tool as FastMCPTool
 
 from nomad.common.config_errors import ConfigError
 from nomad.common.name_sanitize import sanitize_export_name, sanitize_mcp_name
@@ -304,13 +305,13 @@ def export_models_config(
 
 
 def export_model_report(config_path: Path, output_dir: Path) -> Path:
-    """Export model cards and a linked index of configured model tools."""
+    """Export model cards and a categorized index of configured tools."""
     config_path = config_path.expanduser()
     config = ServerConfig.from_file(config_path)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     locator = ModelCardLocator()
-    report_entries: list[tuple[str, str, Path]] = []
+    model_entries: list[tuple[str, str, Path]] = []
     used_names: set[str] = set()
 
     for fm_config in config.fmod_models:
@@ -324,18 +325,27 @@ def export_model_report(config_path: Path, output_dir: Path) -> Path:
         locator.register(tool.name, source)
         card_path = output_dir / f"{tool.name}.md"
         card_path.write_text(locator.read_model_card(tool.name), encoding="utf-8")
-        report_entries.append((tool.name, tool.description, card_path))
+        model_entries.append((tool.name, tool.description, card_path))
 
-    lines = ["# Nomad Model Report"]
-    for tool_name, description, card_path in report_entries:
+    regular_entries = []
+    for tool_config in config.tools:
+        tool = FastMCPTool.from_function(tool_config.fn, name=tool_config.name)
+        regular_entries.append((tool.name, tool.description or ""))
+
+    lines = ["# Nomad Tool Report", "", "## SciFM Tools"]
+    for tool_name, description, card_path in model_entries:
         lines.extend(
             [
                 "",
-                f"## [{tool_name}]({card_path.name})",
+                f"### [{tool_name}]({card_path.name})",
                 "",
                 description,
             ]
         )
+
+    lines.extend(["", "## Other Tools"])
+    for tool_name, description in regular_entries:
+        lines.extend(["", f"### {tool_name}", "", description])
 
     readme = output_dir / "README.md"
     readme.write_text("\n".join(lines) + "\n", encoding="utf-8")
