@@ -330,7 +330,7 @@ git push
 Run:
 
 ```bash
-nomad serve --transport streamable-http --host localhost --port 8000 path/to/nomad.yml
+nomad serve --transport http --host localhost --port 8000 path/to/nomad.yml
 ```
 
 Expected output (truncated):
@@ -362,7 +362,7 @@ Create `gateway.yml`:
 ```yaml
 servers:
   nomad:
-    transport: streamable_http
+    transport: http
     url: http://localhost:8000/mcp
 ```
 
