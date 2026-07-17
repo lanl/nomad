@@ -3,6 +3,7 @@ import sys
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 
+import fastmcp
 import truststore
 from dotenv import dotenv_values, load_dotenv
 from pygments.lexers import get_lexer_by_name
@@ -11,6 +12,9 @@ from sphinx.highlighting import lexers
 
 # Use system certificates
 truststore.inject_into_ssl()
+
+# Resolve FastMCP's lazy client export before notebook execution and autodoc.
+FASTMCP_CLIENT = fastmcp.Client
 
 project = "nomad"
 copyright = "2026, Nomad Contributors"
