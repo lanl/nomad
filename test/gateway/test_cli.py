@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from mcp.client.session_group import StreamableHttpParameters
+from fastmcp.mcp_config import RemoteMCPServer
 from typer.testing import CliRunner
 
 from nomad.common.config_errors import ConfigError
@@ -24,7 +24,15 @@ def dummy_config(tmp_path: Path) -> Path:
     return path
 
 
-def test_streamable_http_normalizes(dummy_config: Path, monkeypatch):
+@pytest.mark.parametrize(
+    "transport",
+    ["http", "streamable-http", "streamable_http"],
+)
+def test_http_transport_normalizes(
+    dummy_config: Path,
+    monkeypatch,
+    transport: str,
+):
     captured: dict[str, Any] = {}
 
     monkeypatch.setattr(cli, "_configure_logging", lambda level, log_file=None: None)
@@ -46,12 +54,12 @@ def test_streamable_http_normalizes(dummy_config: Path, monkeypatch):
             "--config",
             str(dummy_config),
             "--transport",
-            "streamable_http",
+            transport,
         ],
     )
     assert result.exit_code == 0
     assert isinstance(captured["config"], GatewayConfig)
-    assert captured["transport"] == "streamable-http"
+    assert captured["transport"] == "http"
     assert captured["log_level"] == "INFO"
     assert captured["log_file_handler"] is None
     assert captured["kwargs"] == {}
@@ -151,7 +159,7 @@ def test_gateway_config_schema_error_describes_bad_servers_section(tmp_path: Pat
 def test_gateway_config_schema_error_names_invalid_server(tmp_path: Path):
     config_path = tmp_path / "bad.yaml"
     config_path.write_text(
-        "servers:\n  secure:\n    transport: streamable_http\n",
+        "servers:\n  secure:\n    transport: http\n",
         encoding="utf-8",
     )
 
@@ -163,13 +171,27 @@ def test_gateway_config_schema_error_names_invalid_server(tmp_path: Path):
     assert "Missing required field `url`" in message
 
 
+@pytest.mark.parametrize("transport", ["http", "streamable-http", "streamable_http"])
+def test_http_server_config_transport_aliases(tmp_path: Path, transport: str):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"servers:\n  secure:\n    transport: {transport}\n    url: https://example.invalid/mcp\n",
+        encoding="utf-8",
+    )
+
+    config = GatewayConfig.from_file(config_path)
+
+    assert isinstance(config.servers["secure"], RemoteMCPServer)
+    assert config.servers["secure"].transport == "http"
+
+
 def test_upstream_connection_failure_cli_is_concise(
     dummy_config: Path,
     monkeypatch,
 ):
     monkeypatch.setattr(cli, "_configure_logging", lambda level, log_file=None: None)
 
-    params = StreamableHttpParameters(url="https://example.invalid/mcp")
+    params = RemoteMCPServer(url="https://example.invalid/mcp")
 
     def fake_run_gateway(*args, **kwargs):
         raise UpstreamConnectionError(
@@ -189,7 +211,7 @@ def test_upstream_connection_failure_cli_is_concise(
 
 
 def test_upstream_ssl_failure_message_names_tls():
-    params = StreamableHttpParameters(url="https://example.invalid/mcp")
+    params = RemoteMCPServer(url="https://example.invalid/mcp")
 
     error = UpstreamConnectionError(
         "secure",
