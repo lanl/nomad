@@ -4,8 +4,7 @@ import ssl
 from collections.abc import Iterable
 from typing import Any
 
-from mcp import StdioServerParameters
-from mcp.client.session_group import StreamableHttpParameters
+from fastmcp.mcp_config import RemoteMCPServer, StdioMCPServer
 
 
 class UpstreamConnectionError(RuntimeError):
@@ -40,9 +39,9 @@ def _format_upstream_connection_error(
 
 
 def _describe_server_params(params: Any) -> str:
-    if isinstance(params, StreamableHttpParameters):
-        return f"streamable_http {params.url}"
-    if isinstance(params, StdioServerParameters):
+    if isinstance(params, RemoteMCPServer):
+        return f"http {params.url}"
+    if isinstance(params, StdioMCPServer):
         args = " ".join(params.args or [])
         command = f"{params.command} {args}".strip()
         return f"stdio command '{command}'"

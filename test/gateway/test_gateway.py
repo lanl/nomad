@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 import pytest_asyncio
 from fastmcp import Client
-from mcp.client.stdio import StdioServerParameters
+from fastmcp.mcp_config import StdioMCPServer
 
 from nomad.gateway.config import GatewayConfig, GatewayDefaults
 from nomad.gateway.server import CodeModeGateway
@@ -44,7 +44,7 @@ def _is_subpath(path: Path, parent: Path) -> bool:
 
 def _build_config(tmp_path: Path) -> GatewayConfig:
     servers = {
-        "dummy": StdioServerParameters(
+        "dummy": StdioMCPServer(
             command=sys.executable,
             args=[str(DUMMY_SERVER.resolve())],
             env=os.environ.copy(),
@@ -62,7 +62,7 @@ def _build_config(tmp_path: Path) -> GatewayConfig:
 
 def _build_conflict_config(tmp_path: Path) -> GatewayConfig:
     servers = {
-        "conflict": StdioServerParameters(
+        "conflict": StdioMCPServer(
             command=sys.executable,
             args=[str(DUMMY_CONFLICT_SERVER.resolve())],
             env=os.environ.copy(),

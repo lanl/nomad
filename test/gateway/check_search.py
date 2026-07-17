@@ -1,7 +1,7 @@
 import asyncio
 
 from fastmcp import Client
-from mcp.client.session_group import StreamableHttpParameters
+from fastmcp.mcp_config import RemoteMCPServer
 
 from nomad.gateway import CodeModeGateway, GatewayConfig
 
@@ -15,7 +15,7 @@ async def get_host_tools():
 
 async def test_nomad_code_mode():
     gateway_config = GatewayConfig(
-        servers={"nomad": StreamableHttpParameters(url="http://localhost:8000/mcp")}
+        servers={"nomad": RemoteMCPServer(url="http://localhost:8000/mcp")}
     )
     gateway = CodeModeGateway(gateway_config)
     async with Client(gateway.fastmcp) as client:
