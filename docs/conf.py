@@ -53,7 +53,6 @@ extensions = [
     "sphinx_copybutton",
     "sphinx_llm.txt",
 ]
-llms_txt_build_parallel = False
 
 exclude_patterns = [
     "_build",
