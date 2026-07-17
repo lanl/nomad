@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from fastmcp import Client
 from mcp.types import CallToolResult, Tool
 
 from ..common.upstream_errors import UpstreamConnectionError
 from .config import ServerParameters
-
-if TYPE_CHECKING:
-    from fastmcp import Client
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +46,6 @@ class UpstreamProxy:
             return
         if server not in self._servers:
             raise KeyError(f"Unknown upstream server '{server}'")
-
-        from fastmcp import Client
 
         client = Client(params.to_transport(), name=server)
         try:
