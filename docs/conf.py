@@ -53,6 +53,7 @@ extensions = [
     "sphinx_copybutton",
     "sphinx_llm.txt",
 ]
+llms_txt_build_parallel = False
 
 exclude_patterns = [
     "_build",
@@ -109,7 +110,6 @@ intersphinx_mapping = {
     ),
 }
 nitpick_ignore_regex = [
-    ("py:class", r"(fastmcp|mcp)(\..*)?"),
     ("py:class", r"Path"),
     ("py:class", r"TypeAliasForwardRef"),
     ("py:class", r"'pathlib\.Path'"),
