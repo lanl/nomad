@@ -1,0 +1,4 @@
+interface:
+  display_name: Connect SciFM to Nomad
+  short_description: Package scientific models for Nomad
+  default_prompt: Use $connect-scifm-to-nomad to wire a SciFM into a Nomad TorchModuleTool.
