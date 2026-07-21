@@ -72,7 +72,8 @@ but prefer the HTML docs or source links when details differ.
 
 Treat unclear, incomplete, or contradictory Nomad documentation as a bug. If
 the user and agent are confused after reading the published docs and inspecting
-the code, ask the user whether to open a GitHub issue in the Nomad repository.
+the code, ask the user whether to open a GitHub issue in the Nomad repository:
+`https://github.com/lanl/nomad/issues`.
 
 Open or propose an issue for Nomad behavior that appears undocumented,
 surprising, inconsistent with the docs, difficult to validate, or likely to
