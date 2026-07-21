@@ -8,6 +8,14 @@ through MCP.
 By the end of the guide, `nomad serve ...` should start cleanly, your tool
 should appear in [MCP Inspector][], and a test invocation should return output.
 
+::::{tip} Agent Skill
+:class: dropdown
+Use the [Connect SciFM to Nomad skill](../deployments/agent-skills.md#connect-scifm-to-nomad)
+with your preferred coding agent. After installing the skill, start the agent
+from your model code folder and ask it to help connect the model to Nomad.
+
+::::
+
 ## What you are building
 
 Nomad serves tools from configuration rather than from an ad hoc Python entry
