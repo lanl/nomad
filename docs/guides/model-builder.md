@@ -12,8 +12,15 @@ should appear in [MCP Inspector][], and a test invocation should return output.
 :class: tip dropdown
 
 Use the [Connect SciFM to Nomad skill](../deployments/agent-skills.md#connect-scifm-to-nomad)
-with your preferred coding agent. After installing the skill, start the agent
-from your model code folder and ask it to help connect the model to Nomad.
+with your preferred coding agent to host a SciFM with Nomad:
+
+1. Install [Codex](https://help.openai.com/en/articles/11096431),
+   [Claude Code](https://docs.anthropic.com/en/docs/claude-code/getting-started),
+   [URSA](https://github.com/lanl/ursa), or your coding agent of choice.
+2. Start the agent from your model's code folder.
+3. Ask the agent to install the
+   [Connect SciFM to Nomad skill](../deployments/agent-skills.md#connect-scifm-to-nomad).
+4. Ask the agent to connect your model to Nomad.
 
 ::::
 
