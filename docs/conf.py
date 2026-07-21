@@ -1,3 +1,4 @@
+import importlib
 import os
 import sys
 from importlib import metadata as importlib_metadata
@@ -41,6 +42,7 @@ docs_source_prefix = f"{source_branch}/{source_directory}"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DOCS_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(DOCS_ROOT))
+agent_skills_docs = importlib.import_module("agent_skills_docs")
 load_dotenv(PROJECT_ROOT / ".env", override=False)
 
 extensions = [
@@ -254,6 +256,12 @@ def _write_generated_metric_docs() -> None:
 
 
 _write_generated_metric_docs()
+agent_skills_docs.write_generated_agent_skills_docs(
+    project_root=PROJECT_ROOT,
+    docs_root=DOCS_ROOT,
+    source_repository=source_repository,
+    source_branch=source_branch,
+)
 
 
 def setup(app):

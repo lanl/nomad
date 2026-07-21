@@ -60,7 +60,7 @@ class MoleculeInput(BaseModel):
 
 class PredictedProperty(BaseModel):
     value: float | int | str | bool | list[float] | list[int] | list[str]
-    unit: str | None = None
+    units: str | None = None
     description: str | None = None
 
 
@@ -81,10 +81,10 @@ Inspect the model card and package API before choosing the inference path:
   when it exists and documents preprocessing.
 - Fall back to tokenizer/collator/model-forward only when the card or source
   confirms the expected inputs.
-- Read channel metadata from model attributes or config. Accept common key
-  variants such as `unit` and `units`.
+- Read channel metadata from model attributes or config.
 - If channel metadata is missing, emit stable fallback names like
   `prediction`, `prediction_0`, or `embedding`.
+- Prefer `units` in public response schemas.
 
 For batch-oriented transformer models, keep batching inside
 `TorchModuleTool.preprocess`; the public MCP call can stay scalar.

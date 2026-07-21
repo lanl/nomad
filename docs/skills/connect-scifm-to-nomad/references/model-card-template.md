@@ -1,1 +1,0 @@
-../../../../container/model-card.md

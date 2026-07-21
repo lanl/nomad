@@ -9,7 +9,7 @@ Nomad.
 - Choose The Contract
 - Metadata To Inspect
 - WellFormat Pattern
-- Adapter Shape
+- Adapter Guidance
 - Production Checks
 - Testing And User Review
 
@@ -79,42 +79,28 @@ Common layouts:
 - model-specific forms carrying boundary conditions, state labels, coordinates,
   or metadata objects alongside the tensor.
 
-## Adapter Shape
+## Adapter Guidance
 
-Keep model-specific loading and metadata handling behind small helper functions:
+Use the Model Builder guide for the generic `TorchModuleTool` structure. For
+PDE and field models, keep model-specific loading, metadata parsing,
+normalization, and field conversion behind small helper functions so the tool
+methods stay readable and testable.
 
-```python
-class FieldModelTool(
-    TorchModuleTool[InputSchema, OutputSchema, dict[str, object], dict[str, object]]
-):
-    args_schema: type[InputSchema] = InputSchema
-    output_schema: type[OutputSchema] = OutputSchema
-
-    @classmethod
-    def from_pretrained(cls, name_or_path: str, **kwargs):
-        device = default_device()
-        model, metadata = load_model_and_metadata(name_or_path, device=device)
-        return cls(
-            fm=model,
-            name="field-model",
-            description=description_from_metadata(metadata),
-            batch_size=1,
-            device=device,
-            metadata=metadata,
-        )
-
-    def preprocess(self, inputs):
-        return build_model_batch(inputs, self.metadata, self.device)
-
-    def _forward(self, model_inputs):
-        return call_model(self.fm, model_inputs)
-
-    def postprocess(self, model_output):
-        yield from convert_outputs_to_schema(model_output, self.metadata)
-```
+Prefer the upstream inference API when it exists and is documented. Some PDE
+SciFMs expose a `predict(...)` or sampler method that owns preprocessing,
+sampling, CPU NumPy conversion, or postprocessing. In that case, wrap the
+official API instead of forcing a direct tensor `forward` call.
 
 `from_pretrained` should work with the resolved model directory that Nomad
-passes in. Avoid requiring arbitrary `nomad.yml` fields to reach the loader.
+passes in. Avoid requiring arbitrary `nomad.yml` fields to reach the loader;
+put channel metadata, normalization statistics, and grid constraints in the
+model artifact/config or a small wrapper package.
+
+When a first-to-last model returns only endpoint frames, one practical
+`WellFormat` convention is to return a two-frame trajectory in the predicted
+field, for example `[initial, final]`, with `dimensions.time` set to
+`[0.0, duration]`. Confirm this convention with the user and document it in the
+tool description and model card.
 
 ## Production Checks
 

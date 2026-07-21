@@ -10,7 +10,7 @@ models.
 
 - Choose The Contract
 - Loading Pattern
-- Adapter Skeleton
+- Adapter Guidance
 - Production Checks
 - Testing And User Review
 
@@ -36,6 +36,10 @@ Keep outputs explicit:
 - Include `token_count`, `truncated`, `model_name`, and `encoding` when helpful.
 - For embeddings, include `embedding_size` and enough metadata to interpret the
   vector.
+- Prefer `list[float]` or `list[list[float]]` for embedding outputs instead of
+  `nomad.well_format.Tensor`, unless the embedding is too large for a
+  JSON-friendly response or a downstream tensor workflow explicitly requires
+  Nomad tensor encoding.
 - For masked-token predictions, return positions, tokens, and scores.
 - For generation, return the prompt, generated content, and decoding settings.
 
@@ -52,53 +56,25 @@ Do not assume that a pretrained representation model is a calibrated property
 predictor. If property prediction requires a fine-tuned head, expose
 embeddings or masked-token predictions unless the head is present.
 
-## Adapter Skeleton
+## Adapter Guidance
 
-```python
-class SequenceModelTool(
-    TorchModuleTool[
-        SequenceInput,
-        SequenceOutput,
-        dict[str, object],
-        dict[str, object],
-    ]
-):
-    args_schema: type[SequenceInput] = SequenceInput
-    output_schema: type[SequenceOutput] = SequenceOutput
-
-    tokenizer: object | None = None
-
-    @classmethod
-    def from_pretrained(cls, name_or_path: str, **kwargs):
-        device = default_device()
-        model, tokenizer, metadata = load_sequence_model(name_or_path)
-        return cls(
-            fm=model,
-            tokenizer=tokenizer,
-            name=metadata.tool_name,
-            description=metadata.description,
-            batch_size=metadata.default_batch_size,
-            device=device,
-        )
-
-    def preprocess(self, inputs):
-        encoded = encode_inputs(inputs, self.tokenizer)
-        return {key: value.to(self.device) for key, value in encoded.items()}
-
-    def _forward(self, model_inputs):
-        return call_sequence_model(self.fm, model_inputs)
-
-    def postprocess(self, model_output):
-        yield from decode_sequence_outputs(model_output)
-```
+Use the Model Builder guide
+(`https://lanl.github.io/nomad/guides/model-builder.html`) for the generic
+`TorchModuleTool` structure, and use the `TorchModuleTool` API reference
+(`https://lanl.github.io/nomad/reference/api-torch-module-tool.html`) for method
+semantics. For representation models, keep tokenization, truncation, generation
+settings, and decode logic in small helpers that can be tested independently
+from the server.
 
 ## Production Checks
 
 - Confirm tokenizer vocabulary, special tokens, mask token, max length, and
   truncation behavior.
-- Confirm whether the model supports CPU, single GPU, or model-parallel GPU
-  loading. `TorchModuleTool` assumes one device unless the underlying wrapper
-  manages placement internally.
+- Confirm that the model does not require multiple GPUs. `TorchModuleTool` is
+  for single-GPU model execution; CPU support is useful as a fallback only when
+  the model and dependencies already support it. If the model requires
+  model-parallel or multi-GPU placement, it needs a separate wrapper/service
+  that hides that placement behind a single tool interface.
 - Avoid loading large weights during import; load only in `from_pretrained`.
 - Keep generated outputs bounded with explicit max-token/max-candidate limits.
 - Confirm with the user what the scientific input representation should be and
