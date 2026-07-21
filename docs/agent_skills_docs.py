@@ -67,8 +67,10 @@ def _read_skill_summary(skill_md: Path, interface: dict[str, object]) -> str:
     return _read_skill_body_summary(skill_md)
 
 
-def _extend_wrapped_paragraph(lines: list[str], text: str, *, width: int = 88) -> None:
-    lines.extend(wrap(text, width=width) or [""])
+def _extend_wrapped_paragraph(
+    lines: list[str], text: str, *, width: int = 88, prefix: str = ""
+) -> None:
+    lines.extend([prefix + l for l in wrap(text, width=width)] or [""])
 
 
 def write_generated_agent_skills_docs(
@@ -114,37 +116,34 @@ def write_generated_agent_skills_docs(
         display_name = _read_skill_display_name(skill_dir, metadata, interface)
         summary = _read_skill_summary(skill_md, interface)
         skill_url = f"{source_repository}/tree/{source_branch}/skills/{skill_dir.name}"
+        skill_dir = f"skills/{skill_dir.name}"
 
-        lines.extend([f"## {display_name}", ""])
+        lines.extend([f"## {{repo_file}}`{display_name}<{skill_dir}>`", ""])
         _extend_wrapped_paragraph(lines, summary)
         lines.extend(
             [
                 "",
-                "Skill location:",
-                "",
-                "```text",
-                skill_url,
-                "```",
-                "",
-                "For reproducible work, replace `main` with a release tag or commit SHA.",
-                "",
                 "Ask your agent to download and install the skill into its skills directory:",
                 "",
                 "```text",
-                f"Download the skill from {skill_url}, resolve any symlinked references, and set it up in my skills directory. Then show me how to use the skill.",
+                f"Download the skill from {skill_url}, ",
+                "resolve any symlinked references, and set it up in my skills directory.",
+                "Then show me how to use the skill.",
                 "```",
                 "",
             ]
         )
-        _extend_wrapped_paragraph(
-            lines,
-            "Different agents store skills in different places and may have their "
-            "own installer commands. Let the agent choose the correct "
-            "installation path and workflow for the environment you are using. "
-            "If an installer copies only the skill folder, it should materialize "
-            "or replace symlinked references that point elsewhere in the Nomad "
-            "repository.",
-        )
+
         lines.append("")
 
+    lines.extend(["", "## Installing Skills", ""])
+    _extend_wrapped_paragraph(
+        lines,
+        "Different agents store skills in different places and may have their "
+        "own installer commands. Let the agent choose the correct "
+        "installation path and workflow for the environment you are using. "
+        "If an installer copies only the skill folder, it should materialize "
+        "or replace symlinked references that point elsewhere in the Nomad "
+        "repository.",
+    )
     output_path.write_text("\n".join(lines), encoding="utf-8")
