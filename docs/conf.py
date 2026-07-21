@@ -167,6 +167,7 @@ viewcode_line_numbers = True
 # -- MyST-NB -----------------------------------------------------------------
 nb_execution_in_temp = False
 nb_execution_mode = "cache"
+nb_execution_excludepatterns = ["guides/nomad_inference.ipynb"]
 nb_execution_timeout = 600
 nb_render_markdown_format = "myst"
 myst_enable_extensions = [

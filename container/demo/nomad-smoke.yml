@@ -1,0 +1,7 @@
+tool_manager:
+  enabled: true
+search_tool:
+  expose: true
+tools:
+  - nomad_demo.pubchem.search_pubchem
+fmod_models: []
