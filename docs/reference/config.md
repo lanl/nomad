@@ -74,7 +74,7 @@ tables.
 ```yaml
 servers:
   nomad:
-    transport: streamable_http
+    transport: http
     url: http://127.0.0.1:8181/mcp
 defaults:
   timeout_seconds: 60
@@ -87,7 +87,9 @@ telemetry:
   otlp_endpoint: http://127.0.0.1:4317
 ```
 
-`transport` is `stdio` or `streamable_http` in gateway config files.
+`transport` is `stdio` or `http` in gateway config files. Legacy
+`streamable-http` and `streamable_http` values are still accepted as aliases
+for `http`.
 The `workspace_root` default controls where sandboxed scripts run. If that
 workspace contains `.venv/bin/python` or `.venv/Scripts/python.exe`, the gateway
 uses it for sandbox execution.

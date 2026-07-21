@@ -788,6 +788,73 @@ def test_nomad_cli_serve_registers_search_tools_when_enabled(
     assert DummyServer.last_instance.registered_tools == ["search_tools"]
 
 
+@pytest.mark.parametrize(
+    "transport",
+    ["http", "streamable-http", "streamable_http"],
+)
+def test_nomad_cli_serve_http_transport_aliases(
+    monkeypatch,
+    tmp_path: Path,
+    transport: str,
+):
+    class DummyServer:
+        last_instance = None
+
+        def __init__(self, *args, **kwargs):
+            self.transport: str | None = None
+            self.kwargs: dict[str, Any] = {}
+            DummyServer.last_instance = self
+
+        def tool(self, **kwargs):
+            def decorator(fn):
+                return fn
+
+            return decorator
+
+        def run(self, *, transport, **kwargs):
+            self.transport = transport
+            self.kwargs = kwargs
+
+    dummy_config = types.SimpleNamespace(
+        tools=[],
+        tool_manager=types.SimpleNamespace(enabled=False),
+        fmod_models=[],
+        search_tool=types.SimpleNamespace(expose=False),
+    )
+
+    monkeypatch.setattr(
+        nomad_cli.ServerConfig,
+        "from_file",
+        classmethod(lambda cls, path: dummy_config),
+    )
+    monkeypatch.setattr(nomad_cli, "FastMCP", DummyServer)
+    monkeypatch.setattr(nomad_cli, "ModelCardLocator", lambda: object())
+    monkeypatch.setattr(
+        nomad_cli, "register_model_card_tool", lambda server, locator: None
+    )
+
+    result = CliRunner().invoke(
+        nomad_cli.app,
+        [
+            "serve",
+            str(tmp_path / "nomad.yml"),
+            "--transport",
+            transport,
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "9000",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert DummyServer.last_instance is not None
+    assert DummyServer.last_instance.transport == "http"
+    assert DummyServer.last_instance.kwargs["host"] == "127.0.0.1"
+    assert DummyServer.last_instance.kwargs["port"] == 9000
+    assert DummyServer.last_instance.kwargs["stateless_http"] is True
+
+
 def test_nomad_cli_serve_reports_malformed_config_without_traceback(tmp_path: Path):
     config_path = tmp_path / "nomad.yml"
     config_path.write_text("fmod_models:\n  - [\n", encoding="utf-8")

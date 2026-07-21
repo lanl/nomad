@@ -24,7 +24,11 @@ app = typer.Typer(
 )
 
 
-TRANSPORT_CHOICES = {"stdio", "streamable-http"}
+TRANSPORT_ALIASES = {
+    "stdio": "stdio",
+    "http": "http",
+    "streamable-http": "http",
+}
 
 
 def _configure_logging(
@@ -60,10 +64,11 @@ def _normalize_transport(transport: str | None) -> str | None:
     if transport is None:
         return None
     normalized = transport.replace("_", "-")
-    if normalized not in TRANSPORT_CHOICES:
-        choices = ", ".join(sorted(TRANSPORT_CHOICES))
+    mapped = TRANSPORT_ALIASES.get(normalized)
+    if mapped is None:
+        choices = ", ".join(("stdio", "http"))
         raise typer.BadParameter(f"Transport must be one of: {choices}.")
-    return normalized
+    return mapped
 
 
 def launch_code_mode(

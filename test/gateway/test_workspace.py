@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from fastmcp import Client
-from mcp.client.stdio import StdioServerParameters
+from fastmcp.mcp_config import StdioMCPServer
 
 from nomad.gateway.config import GatewayConfig, GatewayDefaults
 from nomad.gateway.server import CodeModeGateway
@@ -42,7 +42,7 @@ async def _wait_for_path_absent(path: Path, timeout: float = 2.0) -> None:
 @pytest_asyncio.fixture
 async def ephemeral_gateway(tmp_path: Path):
     servers = {
-        "dummy": StdioServerParameters(
+        "dummy": StdioMCPServer(
             command=sys.executable,
             args=[str(DUMMY_SERVER.resolve())],
             env=os.environ.copy(),
@@ -93,7 +93,7 @@ async def test_ephemeral_workspace_cleanup(ephemeral_gateway: GatewayHarness):
 @pytest.mark.asyncio
 async def test_ephemeral_wrapper_cleanup(tmp_path: Path):
     servers = {
-        "dummy": StdioServerParameters(
+        "dummy": StdioMCPServer(
             command=sys.executable,
             args=[str(DUMMY_SERVER.resolve())],
             env=os.environ.copy(),

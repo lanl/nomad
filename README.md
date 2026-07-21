@@ -52,7 +52,7 @@ npx @modelcontextprotocol/inspector -- \
   nomad serve nomad.yml
 ```
 
-For the streamable HTTP workflow and matching [URSA](https://github.com/lanl/ursa) configs, see
+For the HTTP workflow and matching [URSA](https://github.com/lanl/ursa) configs, see
 [Starting a Nomad server](docs/guides/getting-started.md#starting-a-nomad-server)
 and
 [Connect to a hosted Nomad server](docs/guides/getting-started.md#connect-to-a-hosted-nomad-server).

@@ -23,7 +23,7 @@ docker run --rm \
    --volume "$PWD/secrets/git-credentials:/run/secrets/git-credentials:ro" \
    nomad-demo:latest \
    serve \
-      --transport=streamable-http \
+      --transport=http \
       --host=0.0.0.0 \
       --port=38217 \
       /nomad/nomad.yml
@@ -41,7 +41,7 @@ ch-run --cdi nomad_demo:latest \
    --bind=./secrets/git-credentials:/run/secrets/git-credentials \
    -- \
    serve \
-      --transport=streamable-http \
+      --transport=http \
       --host=$(hostname) \
       --port=38217 \
       /nomad/nomad.yml
@@ -60,7 +60,7 @@ singularity exec \
    --bind=./secrets/git-credentials:/run/secrets/git-credentials:ro \
    docker://registry.example.org/nomad-demo:latest \
    nomad serve \
-      --transport=streamable-http \
+      --transport=http \
       --host=$(hostname) \
       --port=38217 \
       /nomad/nomad.yml

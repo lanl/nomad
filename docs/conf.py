@@ -78,6 +78,7 @@ intersphinx_cache_limit = 0
 user_agent = "sphinx"
 
 # -- Autodoc ----------------------------------------------------------------
+autodoc_use_legacy_class_based = True
 autodoc_default_options = {
     "members": True,
     "undoc-members": True,
@@ -109,7 +110,6 @@ intersphinx_mapping = {
     ),
 }
 nitpick_ignore_regex = [
-    ("py:class", r"(fastmcp|mcp)(\..*)?"),
     ("py:class", r"Path"),
     ("py:class", r"TypeAliasForwardRef"),
     ("py:class", r"'pathlib\.Path'"),

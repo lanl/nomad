@@ -13,7 +13,7 @@ with [`nomad serve`](cli-nomad-serve):
 
 ```shell
 uv run nomad serve \
-  --transport streamable-http \
+  --transport http \
   --port 8181 \
   nomad.yml
 ```
@@ -39,7 +39,7 @@ If you use [URSA][], add the following to your URSA config (for example,
 ```yaml
 mcp_servers:
   nomad:
-    transport: streamable-http
+    transport: http
     url: http://localhost:8181/mcp
 ```
 
@@ -51,12 +51,12 @@ Then start URSA with `ursa --config ursa.yml`.
 ## Connect to a Hosted Nomad Server
 
 If you have access to a hosted Nomad server, add it to your [URSA][] configuration
-with its streamable HTTP endpoint:
+with its HTTP endpoint:
 
 ```yaml
 mcp_servers:
   nomad:
-    transport: streamable-http
+    transport: http
     url: https://nomad.example.org/mcp
     # Authentication headers are optional
     headers:
@@ -108,7 +108,7 @@ First, create `gateway.yml`:
 servers:
   # Or any existing MCP server
   nomad:
-    transport: streamable_http
+    transport: http
     url: http://127.0.0.1:8017/mcp
 defaults:
   timeout_seconds: 60
@@ -168,7 +168,7 @@ Then create a gateway config for the local Nomad server (`gateway.yaml`):
 ```yaml
 servers:
   nomad:
-    transport: streamable_http
+    transport: http
     url: http://127.0.0.1:8181/mcp
 ```
 

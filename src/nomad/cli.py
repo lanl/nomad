@@ -26,6 +26,7 @@ from .otel import configure_otel, shutdown_otel
 from .tool_search import register_search_tool
 
 LogLevelName = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+ServeTransport = Literal["stdio", "http", "streamable-http", "streamable_http"]
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -48,6 +49,13 @@ except PackageNotFoundError:  # pragma: no cover - local checkout
 _CODE_MODE_EXEC_CONTEXT_SETTINGS = {
     "allow_extra_args": True,
 }
+
+
+def _normalize_serve_transport(transport: str) -> str:
+    normalized = transport.replace("_", "-")
+    if normalized == "streamable-http":
+        return "http"
+    return normalized
 
 
 def _format_visible_devices(manager: Any) -> str:
@@ -121,7 +129,7 @@ def run_code_mode_script(
 
 
 @app.command(
-    short_help="Serve Nomad tools over stdio or streamable HTTP.",
+    short_help="Serve Nomad tools over stdio or HTTP.",
 )
 def serve(
     config: Annotated[
@@ -140,7 +148,7 @@ def serve(
         ),
     ] = "INFO",
     transport: Annotated[
-        Literal["stdio", "streamable-http"],
+        ServeTransport,
         typer.Option(
             "--transport",
             "-t",
@@ -148,7 +156,7 @@ def serve(
             envvar="NOMAD_SERVE_TRANSPORT",
             help=(
                 "Server transport. Use `stdio` for local MCP clients or "
-                "`streamable-http` for network clients."
+                "`http` for network clients."
             ),
         ),
     ] = "stdio",
@@ -167,14 +175,14 @@ def serve(
         typer.Option(
             "--host",
             envvar="NOMAD_SERVE_HOST",
-            help="Host interface for `streamable-http`. Ignored for `stdio`.",
+            help="Host interface for `http`. Ignored for `stdio`.",
         ),
     ] = "localhost",
     port: Annotated[
         int,
         typer.Option(
             "--port",
-            help="Port for `streamable-http`. Ignored for `stdio`.",
+            help="Port for `http`. Ignored for `stdio`.",
             envvar="NOMAD_SERVE_PORT",
         ),
     ] = 8000,
@@ -202,9 +210,10 @@ def serve(
 
     The config determines which MCP tools, model-backed tools, model cards, and
     optional search endpoints are registered. Use `stdio` for local clients and
-    `streamable-http` when exposing Nomad over the network.
+    `http` when exposing Nomad over the network.
     """
 
+    transport = _normalize_serve_transport(transport)
     numeric_level = parse_log_level(log_level)
     configure_root_logging(stderr_level=numeric_level, log_file=log_file)
     LOGGER.setLevel(numeric_level)

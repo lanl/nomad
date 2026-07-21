@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## Changed
+
+- Migrated gateway upstream connections and transport configuration to FastMCP ([#4])
+
 ### Fixed
 
 - Fixed borked nomad executable path in Nomad Demo Dockerfile ([#2])
@@ -21,3 +25,4 @@ Initial Public Release of Nomad
 
 <!-- Pull Requests -->
 [#2]: https://github.com/lanl/nomad/pull/2
+[#4]: https://github.com/lanl/nomad/pull/4

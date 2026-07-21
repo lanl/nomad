@@ -8,10 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 
-from mcp import StdioServerParameters
-from mcp.client.session_group import (
-    StreamableHttpParameters,
-)
+from fastmcp.mcp_config import RemoteMCPServer, StdioMCPServer
 from pydantic import (
     BaseModel,
     BeforeValidator,
@@ -33,19 +30,19 @@ from .runtime.constants import DEFAULT_WRAPPERS_PACKAGE
 
 def _validate_server_parameters(
     config: dict,
-) -> StdioServerParameters | StreamableHttpParameters:
+) -> StdioMCPServer | RemoteMCPServer:
     if not isinstance(config, dict):
         return config  # type: ignore[return-value]
     transport_hint = config.get("transport")
     payload = {k: v for k, v in config.items() if k != "transport"}
     if transport_hint == "stdio":
-        return StdioServerParameters(**payload)
-    if transport_hint == "streamable_http":
-        return StreamableHttpParameters(**payload)
+        return StdioMCPServer(**payload)
+    if transport_hint in {"http", "streamable-http", "streamable_http"}:
+        return RemoteMCPServer(**payload, transport="http")
     if transport_hint is None:
         for candidate in (
-            StdioServerParameters,
-            StreamableHttpParameters,
+            StdioMCPServer,
+            RemoteMCPServer,
         ):
             try:
                 return candidate(**payload)
@@ -53,7 +50,7 @@ def _validate_server_parameters(
                 continue
         msg = (
             "Unable to determine transport for MCP server configuration. "
-            "Provide 'transport' with one of: stdio, streamable_http."
+            "Provide 'transport' with one of: stdio, http."
         )
         raise ValueError(msg)
     raise ValueError(
@@ -62,7 +59,7 @@ def _validate_server_parameters(
 
 
 ServerParameters = Annotated[
-    StdioServerParameters | StreamableHttpParameters,
+    StdioMCPServer | RemoteMCPServer,
     BeforeValidator(_validate_server_parameters),
 ]
 
@@ -228,7 +225,7 @@ class GatewayConfig(BaseModel):
         for name, cfg in raw_servers.items():
             if isinstance(
                 cfg,
-                (StdioServerParameters, StreamableHttpParameters),
+                (StdioMCPServer, RemoteMCPServer),
             ):
                 coerced[name] = cfg
             else:
