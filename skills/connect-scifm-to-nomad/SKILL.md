@@ -67,3 +67,19 @@ but prefer the HTML docs or source links when details differ.
    - First run agent-side checks: package import, schema tests, preprocessing/postprocessing tests, real-model integration tests when available, and Nomad server execution using the surfaces recommended by the Model Builder guide.
    - Then create user-review artifacts. For PDEs and fields, show input frames, predicted frames, deltas, and scalar summaries. For sequence or molecular models, report representative predictions, scores, validity checks, and units.
    - Ask the user to confirm the outputs are scientifically plausible. Treat unexpected predictions as possible interface, preprocessing, unit, or normalization bugs until checked.
+
+## Getting Help
+
+Treat unclear, incomplete, or contradictory Nomad documentation as a bug. If
+the user and agent are confused after reading the published docs and inspecting
+the code, ask the user whether to open a GitHub issue in the Nomad repository.
+
+Open or propose an issue for Nomad behavior that appears undocumented,
+surprising, inconsistent with the docs, difficult to validate, or likely to
+affect other model builders. Include the Nomad version or commit, model type,
+adapter pattern, config, command, observed behavior, expected behavior, the
+smallest reproducible example or failing test, and logs with secrets removed.
+
+Do not open Nomad issues for model-specific scientific choices such as units,
+normalization, valid inputs, training assumptions, or prediction interpretation.
+Keep those questions with the user or model builder as the scientific authority.
