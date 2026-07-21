@@ -72,7 +72,12 @@ jobs:
           docker run --detach \
             --name "${container}" \
             --publish 38217:38217 \
-            "${{ steps.build.outputs.image }}"
+            "${{ steps.build.outputs.image }}" \
+            serve \
+            --transport=streamable-http \
+            --host=0.0.0.0 \
+            --port=38217 \
+            /nomad/container/demo/nomad-smoke.yml
 
           for attempt in {1..60}; do
             if curl --silent --output /dev/null http://127.0.0.1:38217/mcp; then

@@ -5,4 +5,5 @@
 
 deployment-spec
 guide
+agent-skills
 ```
