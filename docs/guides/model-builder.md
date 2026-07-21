@@ -8,19 +8,19 @@ through MCP.
 By the end of the guide, `nomad serve ...` should start cleanly, your tool
 should appear in [MCP Inspector][], and a test invocation should return output.
 
-::::{admonition} Agent Skill
-:class: tip dropdown
+::::{dropdown} 🤖 Agent Skill
+:color: muted
 
-Use the [Connect SciFM to Nomad skill](../deployments/agent-skills.md#connect-scifm-to-nomad)
-with your preferred coding agent to host a SciFM with Nomad:
+The [Connect SciFM to Nomad skill](../deployments/agent-skills.md#connect-scifm-to-nomad)
+guides your preferred agent through connecting a SciFM to Nomad:
 
-1. Install [Codex](https://help.openai.com/en/articles/11096431),
-   [Claude Code](https://docs.anthropic.com/en/docs/claude-code/getting-started),
-   [URSA](https://github.com/lanl/ursa), or your coding agent of choice.
+1. Install [Codex](https://chatgpt.com/codex/),
+   [Claude Code](https://code.claude.com/docs/en/overview),
+   [URSA](https://lanl.github.io/ursa/), or your coding agent of choice.
 2. Start the agent from your model's code folder.
-3. Ask the agent to install the
-   [Connect SciFM to Nomad skill](../deployments/agent-skills.md#connect-scifm-to-nomad).
-4. Ask the agent to connect your model to Nomad.
+3. Ask the agent to install the skill using the
+   [install prompt](../deployments/agent-skills.md#connect-scifm-to-nomad).
+4. Ask the agent to connect your model.
 
 ::::
 
