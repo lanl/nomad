@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added the `--report` flag to `nomad export` to generate model cards and a linked README for the configured models and tools ([#3])
-- Added Agent Skills documentation and a SciFM-to-Nomad connector skill ([#5])
+- Added Agent Skills documentation and a SciFM-to-Nomad connector skill ([#5],[#6])
 
 ### Changed
 
@@ -33,3 +33,4 @@ Initial Public Release of Nomad
 [#3]: https://github.com/lanl/nomad/pull/3
 [#4]: https://github.com/lanl/nomad/pull/4
 [#5]: https://github.com/lanl/nomad/pull/5
+[#6]: https://github.com/lanl/nomad/pull/6
