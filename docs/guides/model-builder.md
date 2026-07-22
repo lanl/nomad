@@ -8,21 +8,55 @@ through MCP.
 By the end of the guide, `nomad serve ...` should start cleanly, your tool
 should appear in [MCP Inspector][], and a test invocation should return output.
 
-::::{dropdown} 🤖 Agent Skill
+:::::{dropdown} 🤖 Agent Skill
 :color: muted
 
 The [Connect SciFM to Nomad skill](../deployments/agent-skills.md#connect-scifm-to-nomad)
 guides your preferred agent through connecting a SciFM to Nomad:
 
-1. Install [Codex](https://chatgpt.com/codex/),
-   [Claude Code](https://code.claude.com/docs/en/overview),
-   [URSA](https://lanl.github.io/ursa/), or your coding agent of choice.
+1. Install [Codex](codex),
+   [Claude Code](claude-code),
+   [URSA](ursa), or your coding agent of choice.
 2. Start the agent from your model's code folder.
 3. Ask the agent to install the skill using the
    [install prompt](../deployments/agent-skills.md#connect-scifm-to-nomad).
 4. Ask the agent to connect your model.
 
+These recordings show [Codex](codex) and [URSA](ursa) connecting
+[`mist-models/mist-mixtures-zffffbex`](https://huggingface.co/mist-models/mist-mixtures-zffffbex)
+to Nomad, starting from clean checkouts of [MIST](https://github.com/BattModels/mist)
+and finishing with validated MCP tools.
+
+::::{tab-set}
+:::{tab-item} Codex
+
+```{asciinema-player} codex-mist.cast
+:cols: 100
+:rows: 24
+:speed: 13.476
+:idle-time-limit: 1
+:poster: npt:0:03
+:theme: asciinema
+:autoplay:
+:loop:
+```
+:::
+
+:::{tab-item} URSA
+```{asciinema-player} ursa-mist.cast
+:cols: 100
+:rows: 30
+:speed: 1.9
+:idle-time-limit: 1
+:poster: npt:0:03
+:theme: asciinema
+:autoplay:
+:loop:
+```
+:::
 ::::
+
+:::::
 
 ## What you are building
 
@@ -440,3 +474,6 @@ For the full demo deployment workflow, see the
 
 [uv]: https://docs.astral.sh/uv/
 [MCP Inspector]: https://modelcontextprotocol.io/docs/tools/inspector
+[codex]: https://chatgpt.com/codex/
+[claude-code]: https://code.claude.com/docs/en/overview
+[ursa]: https://lanl.github.io/ursa/

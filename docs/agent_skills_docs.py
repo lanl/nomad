@@ -145,4 +145,7 @@ def write_generated_agent_skills_docs(
         "folder, it should materialize or replace symlinked references that "
         "point elsewhere in the Nomad repository.",
     )
-    output_path.write_text("\n".join(lines), encoding="utf-8")
+    contents = "\n".join(lines)
+    if output_path.exists() and output_path.read_text(encoding="utf-8") == contents:
+        return
+    output_path.write_text(contents, encoding="utf-8")
