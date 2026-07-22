@@ -35,3 +35,14 @@ div.cell_output img {
     display: block;
     margin: 0 auto;
 }
+
+/* Keep terminal recordings within the article and usable on narrow screens. */
+.asciinema-player-embed {
+    margin: 1rem 0;
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.asciinema-player-embed .ap-wrapper {
+    max-width: 100%;
+}
