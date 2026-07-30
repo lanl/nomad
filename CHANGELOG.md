@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added optional SciFM background tasks with configurable Docket storage and bounded Nomad queue admission ([#7])
+
+### Breaking
+
+- Migrated to the FastMCP v4 beta and MCP 2, with FastMCP owning MCP telemetry and Nomad retaining domain metrics and child spans ([#7])
+
+### Changed
+
+- Changed `max_pending_per_tool` to a finite, non-nullable limit and added derived Docket worker concurrency controls ([#7])
+
 ## [v0.2.1] - 2026-09-10
 
 ### Changed
@@ -54,6 +66,7 @@ Initial Public Release of Nomad
 [#4]: https://github.com/lanl/nomad/pull/4
 [#5]: https://github.com/lanl/nomad/pull/5
 [#6]: https://github.com/lanl/nomad/pull/6
+[#7]: https://github.com/lanl/nomad/pull/7
 [#8]: https://github.com/lanl/nomad/pull/8
 [#9]: https://github.com/lanl/nomad/pull/9
 [#10]: https://github.com/lanl/nomad/pull/10
