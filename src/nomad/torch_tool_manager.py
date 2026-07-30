@@ -5,12 +5,15 @@ import logging
 import time
 from collections import deque
 from collections.abc import Callable
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar
 
 import torch
+from docket.dependencies import AdmissionBlocked, Dependency, current_execution
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 from fastmcp.tools import FunctionTool as FastMCPTool
 from pydantic import BaseModel
 
@@ -64,6 +67,54 @@ class ToolRequest:
     future: asyncio.Future
     enqueued_at: float = field(default_factory=time.monotonic)
     metrics_recorded: bool = False
+
+
+@dataclass(slots=True)
+class DocketQueueReservation:
+    manager: "TorchModelToolManager"
+    tool_name: str
+    reserved: bool = True
+
+
+_docket_queue_reservation: ContextVar[DocketQueueReservation | None] = ContextVar(
+    "nomad_docket_queue_reservation", default=None
+)
+
+
+class DocketQueueAdmission(Dependency["DocketQueueAdmission"]):
+    """Reserve Nomad queue capacity before Docket starts a managed tool."""
+
+    def __init__(self, manager: "TorchModelToolManager", tool_name: str) -> None:
+        self.manager = manager
+        self.tool_name = tool_name
+
+    async def __aenter__(self) -> "DocketQueueAdmission":
+        from docket.dependencies._functional import _Depends
+
+        if not await self.manager._reserve_docket_queue_slot(self.tool_name):
+            raise AdmissionBlocked(
+                current_execution.get(),
+                reason=f"Nomad queue for {self.tool_name!r} is full",
+            )
+        reservation = DocketQueueReservation(self.manager, self.tool_name)
+        context_token = _docket_queue_reservation.set(reservation)
+        _Depends.stack.get().push_async_callback(
+            self._cleanup_reservation, reservation, context_token
+        )
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+        pass
+
+    @staticmethod
+    async def _cleanup_reservation(
+        reservation: DocketQueueReservation,
+        context_token: Token[DocketQueueReservation | None],
+    ) -> None:
+        if reservation.reserved:
+            await reservation.manager._release_docket_queue_slot(reservation.tool_name)
+            reservation.reserved = False
+        _docket_queue_reservation.reset(context_token)
 
 
 @dataclass(slots=True)
@@ -215,9 +266,8 @@ class TorchModelToolManager:
         self.gc_idle_seconds = gc_idle_seconds
         self.disk_idle_seconds = disk_idle_seconds
         max_pending_per_tool = config.max_pending_per_tool
-        if max_pending_per_tool is not None and max_pending_per_tool < 1:
-            raise ValueError("max_pending_per_tool must be >= 1 or None")
         self._max_pending_per_tool = max_pending_per_tool
+        self._docket_concurrency_limit = max(1, max_pending_per_tool * 3 // 4)
         threshold = float(idle_seconds) if idle_seconds is not None else None
         self._idle_threshold = None if threshold is None else max(threshold, 0.0)
         disk_threshold = (
@@ -272,6 +322,7 @@ class TorchModelToolManager:
 
         self._tools: dict[str, ToolState] = {}
         self._inflight_by_tool: dict[str, int] = {}
+        self._docket_queue_reservations: dict[str, int] = {}
 
         self._condition = asyncio.Condition()
         self._pending_tools: deque[str] = deque()
@@ -344,6 +395,7 @@ class TorchModelToolManager:
             batch_size=effective_batch,
         )
         self._inflight_by_tool[name] = 0
+        self._docket_queue_reservations[name] = 0
         self._offload_tool(tool)
 
     def add_to_fastmcp(self, server: FastMCP) -> dict[str, FastMCPTool]:
@@ -380,8 +432,12 @@ class TorchModelToolManager:
         request = ToolRequest(input=request_input, future=future)
 
         try:
-            await self._enqueue_request(name, request)
-        except RuntimeError:
+            await self._enqueue_request(
+                name,
+                request,
+                docket_reservation=_docket_queue_reservation.get(),
+            )
+        except ToolError:
             nomad_metrics.record_tool_request_rejection(name, "queue_full")
             raise
 
@@ -461,18 +517,54 @@ class TorchModelToolManager:
             return args_schema(**kwargs)
         raise ValueError("No input provided for tool execution")
 
-    async def _enqueue_request(self, tool_name: str, request: ToolRequest) -> None:
+    async def _reserve_docket_queue_slot(self, tool_name: str) -> bool:
+        async with self._condition:
+            state = self._tools[tool_name]
+            active_pending = sum(
+                1 for pending in state.queue if not pending.future.cancelled()
+            )
+            reserved = self._docket_queue_reservations[tool_name]
+            if active_pending + reserved >= self._max_pending_per_tool:
+                return False
+            self._docket_queue_reservations[tool_name] = reserved + 1
+            return True
+
+    async def _release_docket_queue_slot(self, tool_name: str) -> None:
+        async with self._condition:
+            reserved = self._docket_queue_reservations[tool_name]
+            if reserved:
+                self._docket_queue_reservations[tool_name] = reserved - 1
+                self._condition.notify_all()
+
+    async def _enqueue_request(
+        self,
+        tool_name: str,
+        request: ToolRequest,
+        *,
+        docket_reservation: DocketQueueReservation | None = None,
+    ) -> None:
         async with self._condition:
             state = self._tools[tool_name]
 
-            if self._max_pending_per_tool is not None:
-                active_pending = sum(
-                    1 for pending in state.queue if not pending.future.cancelled()
+            active_pending = sum(
+                1 for pending in state.queue if not pending.future.cancelled()
+            )
+            if docket_reservation is not None:
+                if (
+                    docket_reservation.manager is not self
+                    or docket_reservation.tool_name != tool_name
+                    or not docket_reservation.reserved
+                ):
+                    raise RuntimeError("Invalid Docket queue admission reservation")
+                self._docket_queue_reservations[tool_name] -= 1
+                docket_reservation.reserved = False
+            elif (
+                active_pending + self._docket_queue_reservations[tool_name]
+                >= self._max_pending_per_tool
+            ):
+                raise ToolError(
+                    f"Server busy: too many requests for tool '{tool_name}'"
                 )
-                if active_pending >= self._max_pending_per_tool:
-                    raise RuntimeError(
-                        f"Too many pending requests for tool '{tool_name}'"
-                    )
 
             self._mark_server_active_locked()
             state.queue.append(request)
@@ -743,10 +835,7 @@ class TorchModelToolManager:
                 )
 
     def _next_batch_size(self, state: ToolState) -> int:
-        batch_size = state.batch_size
-        if self._max_pending_per_tool is not None:
-            batch_size = min(batch_size, self._max_pending_per_tool)
-        return batch_size
+        return min(state.batch_size, self._max_pending_per_tool)
 
     def _next_available_requests(
         self,
@@ -966,6 +1055,8 @@ class TorchModelToolManager:
         return build_torch_module_fastmcp_tool(
             state,
             invoke=lambda args: self.call_tool(name, args),
+            task_concurrency_limit=self._docket_concurrency_limit,
+            task_admission=DocketQueueAdmission(self, name),
         )
 
     def _is_out_of_memory(self, exc: Exception) -> bool:

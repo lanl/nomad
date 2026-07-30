@@ -20,7 +20,10 @@ tool_manager:
   idle_seconds: 120
   gc_idle_seconds: 300
   disk_idle_seconds: 600
-  max_pending_per_tool: 50000
+  max_pending_per_tool: 65536
+  task_min_concurrency: 10
+  device_queue_depth: 2
+  task_backend_url: memory://
 search_tool:
   expose: true
 telemetry:
@@ -96,9 +99,8 @@ current working directory. Other transports use a temporary workspace. If the
 workspace contains `.venv/bin/python` or `.venv/Scripts/python.exe`, the gateway
 uses it for sandbox execution.
 
-The gateway emits OpenTelemetry metrics and spans for MCP tool entrypoints,
-sandbox runs, and upstream MCP tool calls. See {doc}`otel` for the full metric
-reference.
+FastMCP emits MCP boundary spans, while the gateway adds domain metrics and
+sandbox execution spans. See {doc}`otel` for the full telemetry reference.
 
 Nomad configures OTLP/HTTP trace and metric exporters when `telemetry.enabled`
 is `true`, `NOMAD_OTEL_ENABLED=true`, or standard OTel environment variables
