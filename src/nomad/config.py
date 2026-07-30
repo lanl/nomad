@@ -227,8 +227,17 @@ class ToolManagerConfig(BaseModel):
     idle_seconds: float | None = Field(default=300.0, ge=0)
     """Idle seconds before reducing a tool's device allocation by one slot. ``None`` disables device-slot idle eviction."""
 
-    max_pending_per_tool: int | None = Field(default=None, ge=1)
-    """Maximum queued requests per tool. ``None`` disables the queue limit."""
+    max_pending_per_tool: int = Field(default=2**16, ge=1)
+    """Maximum queued requests per tool."""
+
+    task_min_concurrency: int = Field(default=10, ge=1)
+    """Minimum derived FastMCP background-task concurrency."""
+
+    device_queue_depth: int = Field(default=2, ge=1)
+    """Maximum batches per device included in derived task concurrency."""
+
+    task_backend_url: str = "memory://"
+    """Docket backend URL used for FastMCP background tasks."""
 
     max_devices_per_tool: int | None = Field(default=None, ge=1)
     """Maximum device slots one tool may occupy. ``None`` uses all managed slots."""

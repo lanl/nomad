@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import re
 import types
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
+from docket import Docket
 from fastmcp import FastMCP
 from pydantic import BaseModel
 from typer.testing import CliRunner
@@ -26,6 +29,50 @@ ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 def strip_ansi(text: str) -> str:
     return ANSI_ESCAPE_RE.sub("", text)
+
+
+def test_docket_retains_terminal_results_for_fifteen_minutes_by_default():
+    execution_ttl = inspect.signature(Docket).parameters["execution_ttl"].default
+
+    assert execution_ttl == timedelta(minutes=15)
+
+
+def test_background_task_concurrency_tracks_gpu_pipeline_capacity():
+    manager = types.SimpleNamespace(devices=["cuda:0", "cuda:1"])
+    manager_config = types.SimpleNamespace(
+        task_min_concurrency=10,
+        max_pending_per_tool=5,
+        device_queue_depth=1,
+    )
+
+    assert (
+        nomad_cli._background_task_concurrency(
+            manager_config,
+            manager,
+            number_of_tools=3,
+            max_batch_size=8,
+        )
+        == 31
+    )
+
+
+def test_background_task_concurrency_applies_minimum_and_device_queue_depth():
+    manager = types.SimpleNamespace(devices=["cuda:0", "cuda:1"])
+    manager_config = types.SimpleNamespace(
+        task_min_concurrency=20,
+        max_pending_per_tool=7,
+        device_queue_depth=2,
+    )
+
+    assert (
+        nomad_cli._background_task_concurrency(
+            manager_config,
+            manager,
+            number_of_tools=2,
+            max_batch_size=8,
+        )
+        == 46
+    )
 
 
 def test_nomad_cli_exposes_code_mode(monkeypatch, tmp_path: Path):
@@ -448,9 +495,16 @@ def test_nomad_cli_serve_registers_resolved_model_card_source(
             self.register_calls.append((tool_name, source))
 
     class DummyServer:
+        last_instance = None
+
         def __init__(self, *args, **kwargs):
             self.registered_tools: list[str] = []
+            self.extensions: list[object] = []
             self.transport: str | None = None
+            DummyServer.last_instance = self
+
+        def add_extension(self, extension):
+            self.extensions.append(extension)
 
         def add_tool(self, tool):
             self.registered_tools.append(tool.name)
@@ -494,6 +548,9 @@ def test_nomad_cli_serve_registers_resolved_model_card_source(
     )
 
     assert result.exit_code == 0
+    assert isinstance(DummyServer.last_instance.extensions[0], nomad_cli.TasksExtension)
+    assert DummyServer.last_instance.extensions[0].docket_settings.concurrency == 2**16
+    assert DummyServer.last_instance.extensions[0].docket_settings.url == "memory://"
     assert dummy_fm.resolve_calls == [dummy_config.context_dir]
     assert dummy_locator.register_calls == [("dummy-tool", resolved_model_dir)]
 
@@ -537,6 +594,9 @@ def test_nomad_cli_serve_continues_after_model_load_failure(
         ran = False
 
         def __init__(self, *args, **kwargs):
+            pass
+
+        def add_extension(self, extension):
             pass
 
         def tool(self, **kwargs):
@@ -617,6 +677,9 @@ def test_nomad_cli_serve_strict_model_load_failure_exits(monkeypatch, tmp_path: 
         ran = False
 
         def __init__(self, *args, **kwargs):
+            pass
+
+        def add_extension(self, extension):
             pass
 
         def tool(self, **kwargs):
@@ -703,6 +766,9 @@ def test_nomad_cli_serve_continues_after_model_registration_failure(
         ran = False
 
         def __init__(self, *args, **kwargs):
+            pass
+
+        def add_extension(self, extension):
             pass
 
         def tool(self, **kwargs):
