@@ -27,6 +27,7 @@ where = ["src"]
 nomad-scifm = { path = "../..", editable = true }
 
 [tool.uv]
+prerelease = "allow"
 override-dependencies = [
     "nomad-scifm[otel]",
 ]
