@@ -8,6 +8,9 @@ to include the OTel SDK and OTLP/gRPC exporter:
 pip install "nomad-scifm[otel]"
 ```
 
+The [demo project](https://github.com/lanl/nomad/tree/main/container/demo) and
+its container image already include this extra.
+
 ## Enabling export
 
 Nomad configures OTLP/gRPC trace and metric exporters when any of these are set:

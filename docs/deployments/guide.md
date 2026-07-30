@@ -69,6 +69,49 @@ singularity exec \
 
 ::::
 
+### Exporting telemetry to an external collector
+
+The demo image includes Nomad's [OpenTelemetry](https://opentelemetry.io/)
+dependencies. To export traces and metrics, set an OTLP endpoint that the
+container can reach:
+
+```shell
+docker run --rm \
+   --add-host=host.docker.internal:host-gateway \
+   --env OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4317 \
+   --publish 38217:38217 \
+   nomad-demo:latest
+```
+
+The collector must listen for OTLP/gRPC traffic on a host interface reachable
+from the container. Nomad initiates the connection to the collector, so the
+Nomad container does not publish port `4317`. When the collector runs in the
+same container network, use its service name instead, for example
+`http://otel-collector:4317`. Setting `OTEL_EXPORTER_OTLP_ENDPOINT` also enables
+telemetry export. See {doc}`OpenTelemetry </reference/otel>` for other ways to
+enable export and configure the service name.
+
+For a complete local pipeline, the demo includes a Compose stack with Nomad,
+an OpenTelemetry Collector, Jaeger, Prometheus, and Grafana:
+
+```shell
+docker compose --file container/demo/compose.yml up --build
+```
+
+Open Grafana at `http://localhost:3000`, Prometheus at
+`http://localhost:9090`, or Jaeger at `http://localhost:16686`. Stop the stack
+and remove its containers with
+`docker compose --file container/demo/compose.yml down`.
+
+::::{dropdown} Compose file
+:color: muted
+
+```{literalinclude} ../../container/demo/compose.yml
+:language: yaml
+```
+
+::::
+
 ### Caching Model Weights
 
 Nomad downloads model weights into `/var/cache/nomad`.

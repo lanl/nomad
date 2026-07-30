@@ -90,6 +90,48 @@ jobs:
           done
           echo "Server did not start within 5 minutes" >&2
           exit 1
+      - name: Smoke test observability stack
+        env:
+          NOMAD_CONFIG: /nomad/container/demo/nomad-smoke.yml
+          NOMAD_DEMO_IMAGE: ${{ steps.build.outputs.image }}
+        run: |
+          compose=(docker compose --file container/demo/compose.yml)
+          trap '${compose[@]} logs; ${compose[@]} down --volumes' EXIT
+          "${compose[@]}" config --quiet
+          "${compose[@]}" up --detach --no-build
+
+          endpoints=(
+            http://127.0.0.1:38217/mcp
+            http://127.0.0.1:13133/
+            http://127.0.0.1:16686/
+            http://127.0.0.1:9090/-/ready
+            http://127.0.0.1:3000/api/health
+          )
+          for endpoint in "${endpoints[@]}"; do
+            ready=false
+            for attempt in {1..60}; do
+              if curl --fail --silent --output /dev/null "${endpoint}"; then
+                ready=true
+                break
+              fi
+              sleep 5
+            done
+            if [[ "${ready}" != "true" ]]; then
+              echo "Service did not become ready: ${endpoint}" >&2
+              exit 1
+            fi
+          done
+
+          for attempt in {1..60}; do
+            if curl --fail --silent \
+              'http://127.0.0.1:9090/api/v1/query?query=up%7Bjob%3D%22nomad%22%7D' \
+              | jq --exit-status '.data.result[0].value[1] == "1"' >/dev/null; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Prometheus did not scrape the Collector within 5 minutes" >&2
+          exit 1
       - name: Resolve image digest
         id: digest
         if: github.event_name == 'release'
