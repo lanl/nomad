@@ -7,15 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.2.0] - 2026-07-29
+
 ### Added
 
-- Added trusted publishing to PyPI and PDF documentation to GitHub releases
+- Added trusted publishing to PyPI and PDF documentation to GitHub releases ([#8])
 - Added the `--report` flag to `nomad export` to generate model cards and a linked README for the configured models and tools ([#3])
 - Added Agent Skills documentation and a SciFM-to-Nomad connector skill ([#5],[#6])
 
 ### Changed
 
-- Renamed the Python distribution to `nomad-scifm`; the `nomad` import package and CLI are unchanged
+- Renamed the Python distribution to `nomad-scifm`; the `nomad` import package and CLI are unchanged ([#8])
 - Migrated gateway upstream connections and transport configuration to FastMCP ([#4])
 
 ### Fixed
@@ -27,7 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Initial Public Release of Nomad
 
 <!-- Versions -->
-[unreleased]: https://github.com/lanl/nomad/commits/main
+[unreleased]: https://github.com/lanl/nomad/compare/v0.2.0...HEAD
+[v0.2.0]: https://github.com/lanl/nomad/compare/v0.1.0...v0.2.0
 [v0.1.0]: https://github.com/lanl/nomad/tree/v0.1.0
 
 <!-- Pull Requests -->
@@ -36,3 +39,4 @@ Initial Public Release of Nomad
 [#4]: https://github.com/lanl/nomad/pull/4
 [#5]: https://github.com/lanl/nomad/pull/5
 [#6]: https://github.com/lanl/nomad/pull/6
+[#8]: https://github.com/lanl/nomad/pull/8
