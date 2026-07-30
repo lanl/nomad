@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Renamed the Python distribution to `nomad-scifm`; the `nomad` import package and CLI are unchanged
 - Migrated gateway upstream connections and transport configuration to FastMCP ([#4])
 
 ### Fixed

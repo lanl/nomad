@@ -29,8 +29,7 @@ Nomad requires Python 3.12 or newer.
 For CLI use:
 
 ```shell
-uv tool install --python 3.13 \
-  git+https://github.com/lanl/nomad.git
+uv tool install --python 3.13 nomad-scifm
 
 nomad --help
 ```

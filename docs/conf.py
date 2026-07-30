@@ -13,11 +13,12 @@ from sphinx.highlighting import lexers
 # Use system certificates
 truststore.inject_into_ssl()
 
-project = "nomad"
+project = "Nomad"
+distribution = "nomad-scifm"
 copyright = "2026, Nomad Contributors"
 author = "Nomad Contributors"
-release = f"v{importlib_metadata.version(project)}"
-PROJECT_METADATA = importlib_metadata.metadata(project)
+release = f"v{importlib_metadata.version(distribution)}"
+PROJECT_METADATA = importlib_metadata.metadata(distribution)
 
 
 def _resolve_source_repository() -> str:

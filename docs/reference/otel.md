@@ -5,7 +5,7 @@ gateway when telemetry export is enabled. Install the optional dependency extra
 to include the OTel SDK and OTLP/gRPC exporter:
 
 ```bash
-pip install "nomad[otel]"
+pip install "nomad-scifm[otel]"
 ```
 
 ## Enabling export

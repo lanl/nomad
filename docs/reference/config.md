@@ -103,7 +103,7 @@ is `true`, `NOMAD_OTEL_ENABLED=true`, or standard OTel environment variables
 such as `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, or
 `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_TRACES_EXPORTER`, or
 `OTEL_METRICS_EXPORTER` are set. Set `OTEL_SDK_DISABLED=true` to disable SDK
-setup. Install `nomad[otel]` to include the optional OTel SDK and OTLP exporter
+setup. Install `nomad-scifm[otel]` to include the optional OTel SDK and OTLP exporter
 dependencies. See {doc}`otel` for links to OTel exporter documentation.
 
 ## Middleware

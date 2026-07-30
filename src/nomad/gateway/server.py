@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 tracer = get_tracer("nomad.gateway")
 
 try:
-    _PACKAGE_VERSION = version("mcp-gateway")
+    _PACKAGE_VERSION = version("nomad-scifm")
 except PackageNotFoundError:  # pragma: no cover - local checkout
     _PACKAGE_VERSION = "0.0.0"
 

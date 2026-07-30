@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Public demo Nomad server environment"
 requires-python = ">=3.12"
 dependencies = [
-    "nomad",
+    "nomad-scifm",
     "openbabel-wheel>=3.1.1.22",
     "pubchempy>=1.0.5",
     "safetensors>=0.4",
@@ -24,11 +24,11 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.uv.sources]
-nomad = { path = "../..", editable = true }
+nomad-scifm = { path = "../..", editable = true }
 
 [tool.uv]
 override-dependencies = [
-    "nomad",
+    "nomad-scifm",
 ]
 
 [tool.uv.pip]

@@ -1,5 +1,5 @@
 [project]
-name = "nomad"
+name = "nomad-scifm"
 version = "0.1.0"
 description = "MCP-Server for SciFMs"
 readme = "README.md"

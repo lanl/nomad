@@ -113,7 +113,7 @@ def configure_otel(
         if not _MISSING_OTEL_WARNING_EMITTED:
             logger.warning(
                 "OpenTelemetry requested but optional dependencies are not installed. "
-                "Install nomad[otel] to enable telemetry export."
+                "Install nomad-scifm[otel] to enable telemetry export."
             )
             _MISSING_OTEL_WARNING_EMITTED = True
         return False
