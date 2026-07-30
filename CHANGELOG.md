@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added trusted publishing to PyPI and PDF documentation to GitHub releases
 - Added the `--report` flag to `nomad export` to generate model cards and a linked README for the configured models and tools ([#3])
 - Added Agent Skills documentation and a SciFM-to-Nomad connector skill ([#5],[#6])
 

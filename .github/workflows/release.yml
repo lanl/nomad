@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+
+env:
+  UV_FROZEN: "1"
+  UV_LINK_MODE: symlink
+  UV_PYTHON: 3.12.12
+  UV_TORCH_BACKEND: cpu
+
+jobs:
+  build-package:
+    name: Build Python distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: true
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Verify release version
+        run: test "v$(uv version --short)" = "${{ github.event.release.tag_name }}"
+      - name: Build distributions
+        run: uv build
+      - name: Check distributions
+        run: uvx twine check dist/*
+      - name: Upload distributions
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-distributions
+          path: dist/
+          if-no-files-found: error
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build-package
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/nomad-scifm/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: python-distributions
+          path: dist
+      - name: Publish distributions
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  upload-github-release:
+    name: Upload distributions to GitHub release
+    needs: build-package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: python-distributions
+          path: dist
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
