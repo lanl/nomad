@@ -171,6 +171,17 @@ html_js_files = [
     "asciinema-player-init.js",
 ]
 
+# -- Options for PDF output --------------------------------------------------
+latex_engine = "xelatex"
+latex_documents = [
+    (root_doc, "nomad-scifm.tex", "Nomad Documentation", author, "manual"),
+]
+latex_domain_indices = False
+latex_elements = {
+    "passoptionstopackages": r"\PassOptionsToPackage{iconpackage=none}{sphinx}",
+    "printindex": "",
+}
+
 viewcode_line_numbers = True
 
 # -- MyST-NB -----------------------------------------------------------------

@@ -7,6 +7,7 @@
 | Run Tests         | `uv run just test` |
 | Lint              | `uv run just lint` |
 | Docs (Build)      | `uv run just docs` |
+| Docs (PDF)        | `uv run --no-dev --group docs just docs-pdf` |
 | Docs (Auto-build) | `uv run just docs --live`       |
 | Docs (Notebook)   | `uv run --group docs jupyter lab path/to/notebook.ipynb` |
 

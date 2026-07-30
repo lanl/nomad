@@ -40,3 +40,6 @@ docs live="false":
     else \
         make -C docs; \
     fi
+
+docs-pdf:
+    make -C docs latexpdf

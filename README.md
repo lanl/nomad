@@ -75,6 +75,7 @@ Useful commands from a repo checkout:
 uv run --only-group lint just lint
 uv run --group dev just test
 uv run --no-dev --group docs just docs
+uv run --no-dev --group docs just docs-pdf
 ```
 
 ## Notice of Copyright Assertion (O5119)
