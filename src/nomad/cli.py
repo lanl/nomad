@@ -43,7 +43,7 @@ app.command(
 
 LOGGER = logging.getLogger(__name__)
 try:
-    _PACKAGE_VERSION = version("nomad")
+    _PACKAGE_VERSION = version("nomad-scifm")
 except PackageNotFoundError:  # pragma: no cover - local checkout
     _PACKAGE_VERSION = "0.0.0"
 _CODE_MODE_EXEC_CONTEXT_SETTINGS = {

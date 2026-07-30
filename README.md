@@ -29,8 +29,7 @@ Nomad requires Python 3.12 or newer.
 For CLI use:
 
 ```shell
-uv tool install --python 3.13 \
-  git+https://github.com/lanl/nomad.git
+uv tool install --python 3.13 nomad-scifm
 
 nomad --help
 ```
@@ -48,7 +47,7 @@ Launch the example server directly in MCP Inspector using stdio:
 
 ```shell
 npx @modelcontextprotocol/inspector -- \
-  uv run --directory container/deploy/demo \
+  uv run --directory container/demo \
   nomad serve nomad.yml
 ```
 
@@ -76,6 +75,7 @@ Useful commands from a repo checkout:
 uv run --only-group lint just lint
 uv run --group dev just test
 uv run --no-dev --group docs just docs
+uv run --no-dev --group docs just docs-pdf
 ```
 
 ## Notice of Copyright Assertion (O5119)

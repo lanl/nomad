@@ -8,21 +8,21 @@ through MCP.
 By the end of the guide, `nomad serve ...` should start cleanly, your tool
 should appear in [MCP Inspector][], and a test invocation should return output.
 
-:::::{dropdown} 🤖 Agent Skill
+:::::{dropdown} Agent Skill
 :color: muted
 
 The [Connect SciFM to Nomad skill](../deployments/agent-skills.md#connect-scifm-to-nomad)
 guides your preferred agent through connecting a SciFM to Nomad:
 
-1. Install [Codex](codex),
-   [Claude Code](claude-code),
-   [URSA](ursa), or your coding agent of choice.
+1. Install [Codex][codex],
+   [Claude Code][claude-code],
+   [URSA][ursa], or your coding agent of choice.
 2. Start the agent from your model's code folder.
 3. Ask the agent to install the skill using the
    [install prompt](../deployments/agent-skills.md#connect-scifm-to-nomad).
 4. Ask the agent to connect your model.
 
-These recordings show [Codex](codex) and [URSA](ursa) connecting
+These recordings show [Codex][codex] and [URSA][ursa] connecting
 [`mist-models/mist-mixtures-zffffbex`](https://huggingface.co/mist-models/mist-mixtures-zffffbex)
 to Nomad, starting from clean checkouts of [MIST](https://github.com/BattModels/mist)
 and finishing with validated MCP tools.
@@ -66,7 +66,7 @@ point. In practice, connecting a SciFM means supplying four pieces:
 - Importable Python code for the tool class/function in a [pip-installable](https://packaging.python.org/en/latest/overview/) package.
 - A reachable model directory for the weights and configuration (`name_or_path`),
 - A model card based on {repo_file}`container/model-card.md <container/model-card.md>`.
-- A config entry (`fmod_models` or `tools`) in {repo_file}`nomad.yml <container/deploy/demo/nomad.yml>`.
+- A config entry (`fmod_models` or `tools`) in {repo_file}`nomad.yml <container/demo/nomad.yml>`.
 
 This page focuses on getting that integration working end to end. Specific
 deployment rules and packaging constraints live in the
@@ -101,7 +101,7 @@ uv run python -c "from my_pkg.mcp import MyModelTool; print(MyModelTool)"
 
 For local development, install your package into the same environment you use
 to run `nomad serve`. For demo deployments, that environment is defined by
-{repo_file}`container/deploy/demo/pyproject.toml <container/deploy/demo/pyproject.toml>`,
+{repo_file}`container/demo/pyproject.toml <container/demo/pyproject.toml>`,
 so your package must be added there as a pinned dependency. If the package
 comes from another repository or a local checkout, also add a matching
 `[tool.uv.sources]` entry so the demo build can resolve it. Do not
@@ -288,7 +288,7 @@ Recommended `name_or_path` values:
 > supported for demo deployments. ORAS artifacts are preferred.
 
 If you use a local model directory for development, choose a directory name
-that satisfies [MCP tool naming constraints](https://modelcontextprotocol.io/specification/server/tools#tool-names),
+that satisfies [SEP-986][] tool naming constraints,
 use a distinct directory name for each weight revision, and include a model
 card matching the {repo_file}`template <container/model-card.md>`.
 
@@ -359,8 +359,7 @@ authenticate to it before startup.
 ### Store Weights With Git LFS
 
 Weights hosted within your project's repository MUST be stored with
-[Git LFS](https://git-lfs.com/). First,
-[install Git LFS](https://github.com/git-lfs/git-lfs?utm_source=gitlfs_site&utm_medium=installation_link&utm_campaign=gitlfs#installing).
+[Git LFS](https://git-lfs.com/). Install Git LFS before continuing.
 The model directory should still match the
 [HuggingFace model repository format](https://huggingface.co/docs/hub/models).
 Then, within your project's repository:
@@ -452,10 +451,10 @@ the {doc}`Nomad Inference notebook </guides/nomad_inference>`.
 If you are wiring a new model into the repository's demo deployment scaffold,
 update these files together:
 
-- {repo_file}`container/deploy/demo/pyproject.toml <container/deploy/demo/pyproject.toml>`:
+- {repo_file}`container/demo/pyproject.toml <container/demo/pyproject.toml>`:
   add your model package to `dependencies`, and add or update the matching
   `[tool.uv.sources]` entry if the package comes from Git or a local checkout.
-- {repo_file}`container/deploy/demo/nomad.yml <container/deploy/demo/nomad.yml>`:
+- {repo_file}`container/demo/nomad.yml <container/demo/nomad.yml>`:
   add your `fmod_models` entry, plus any helper `tools` entries and
   `tool_manager` settings needed for batching or queue depth.
 - {repo_file}`container/model-card.md <container/model-card.md>`:
@@ -463,7 +462,7 @@ update these files together:
   model card in the exported bundle.
 
 Paths in
-{repo_file}`container/deploy/demo/nomad.yml <container/deploy/demo/nomad.yml>`
+{repo_file}`container/demo/nomad.yml <container/demo/nomad.yml>`
 are resolved relative to that file. During image builds,
 {ref}`the demo image build process <building-the-image>`
 runs `nomad export` before building the container, so local model assets

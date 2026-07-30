@@ -13,11 +13,12 @@ from sphinx.highlighting import lexers
 # Use system certificates
 truststore.inject_into_ssl()
 
-project = "nomad"
+project = "Nomad"
+distribution = "nomad-scifm"
 copyright = "2026, Nomad Contributors"
 author = "Nomad Contributors"
-release = f"v{importlib_metadata.version(project)}"
-PROJECT_METADATA = importlib_metadata.metadata(project)
+release = f"v{importlib_metadata.version(distribution)}"
+PROJECT_METADATA = importlib_metadata.metadata(distribution)
 
 
 def _resolve_source_repository() -> str:
@@ -169,6 +170,17 @@ html_js_files = [
     "https://cdn.jsdelivr.net/npm/asciinema-player@3.17.0/dist/bundle/asciinema-player.min.js",
     "asciinema-player-init.js",
 ]
+
+# -- Options for PDF output --------------------------------------------------
+latex_engine = "xelatex"
+latex_documents = [
+    (root_doc, "nomad-scifm.tex", "Nomad Documentation", author, "manual"),
+]
+latex_domain_indices = False
+latex_elements = {
+    "passoptionstopackages": r"\PassOptionsToPackage{iconpackage=none}{sphinx}",
+    "printindex": "",
+}
 
 viewcode_line_numbers = True
 
