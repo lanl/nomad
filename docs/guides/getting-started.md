@@ -8,7 +8,7 @@ This guide gets you to a working connection in three common cases:
 
 ## Starting a Nomad Server
 
-From the repository root, run `cd container/deploy/demo`, then start the server
+From the repository root, run `cd container/demo`, then start the server
 with [`nomad serve`](cli-nomad-serve):
 
 ```shell
@@ -19,7 +19,7 @@ uv run nomad serve \
 ```
 
 This launches the Nomad server defined in
-{repo_file}`nomad.yml <container/deploy/demo/nomad.yml>`, including multiple
+{repo_file}`nomad.yml <container/demo/nomad.yml>`, including multiple
 SciFMs and standard MCP tools. After startup, you should see:
 
 ```

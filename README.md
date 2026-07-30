@@ -47,7 +47,7 @@ Launch the example server directly in MCP Inspector using stdio:
 
 ```shell
 npx @modelcontextprotocol/inspector -- \
-  uv run --directory container/deploy/demo \
+  uv run --directory container/demo \
   nomad serve nomad.yml
 ```
 

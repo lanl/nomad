@@ -26,7 +26,7 @@ docker run --rm \
       --transport=http \
       --host=0.0.0.0 \
       --port=38217 \
-      /nomad/nomad.yml
+      /nomad/container/demo/nomad.yml
 ```
 :::
 
@@ -35,16 +35,16 @@ docker run --rm \
 module load charliecloud
 export CH_IMAGE_USERNAME=your_username
 export CH_IMAGE_PASSWORD=your_token_or_password
-ch-image pull --auth registry.example.org/nomad-demo:latest
-ch-run --cdi nomad_demo:latest \
+ch-image pull --auth registry.example.org/nomad-demo:latest nomad-demo:latest
+ch-run --cdi nomad-demo:latest \
    --bind=./cache:/var/cache/nomad \
    --bind=./secrets/git-credentials:/run/secrets/git-credentials \
    -- \
-   serve \
+   nomad serve \
       --transport=http \
       --host=$(hostname) \
       --port=38217 \
-      /nomad/nomad.yml
+      /nomad/container/demo/nomad.yml
 ```
 :::
 
@@ -63,7 +63,7 @@ singularity exec \
       --transport=http \
       --host=$(hostname) \
       --port=38217 \
-      /nomad/nomad.yml
+      /nomad/container/demo/nomad.yml
 ```
 :::
 
@@ -192,12 +192,12 @@ Use the same variable when running `nomad export --to oras` outside the image if
 
 ### Passing Custom CA Certificates to the Image
 
-Nomad uses Python's system trust store integration for TLS certificates.
-The image sets `SSL_CERT_FILE` to `/run/secrets/ca-certificates.crt` and includes a default bundle at that path.
-Bind-mount a replacement bundle when the runtime environment needs additional certificate authorities.
-Mount this file separately from Git credentials so the default bundle remains visible unless you intentionally replace it.
-
-The mounted file must be a complete CA bundle, not just the additional corporate or proxy root certificate.
+Nomad uses Python's system trust store integration for TLS certificates. When
+the runtime environment needs additional certificate authorities, bind-mount a
+complete replacement CA bundle over the image's system bundle at
+`/etc/ssl/certs/ca-certificates.crt`. Mount this file separately from Git
+credentials. The mounted file must include the public roots as well as any
+additional corporate or proxy root certificates.
 
 (building-the-image)=
 ## Building the Image
