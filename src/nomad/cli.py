@@ -10,6 +10,7 @@ from typing import Annotated, Any, Literal
 import click
 import typer
 from fastmcp import FastMCP
+from fastmcp_tasks import TasksExtension
 from typer.core import TyperCommand
 
 from ._torch_module_compat import add_torch_module_tool_to_fastmcp
@@ -27,7 +28,6 @@ from .tool_search import register_search_tool
 
 LogLevelName = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 ServeTransport = Literal["stdio", "http", "streamable-http", "streamable_http"]
-
 app = typer.Typer(
     no_args_is_help=True,
     help=(
@@ -75,6 +75,22 @@ def _format_visible_devices(manager: Any) -> str:
     if devices:
         return ", ".join(str(device) for device in devices)
     return "none"
+
+
+def _background_task_concurrency(
+    manager_config: Any,
+    manager: Any | None,
+    *,
+    number_of_tools: int,
+    max_batch_size: int,
+) -> int:
+    minimum = getattr(manager_config, "task_min_concurrency", 10)
+    device_queue_depth = getattr(manager_config, "device_queue_depth", 2)
+    max_pending_per_tool = getattr(manager_config, "max_pending_per_tool", 2**16)
+    pending_capacity = number_of_tools * max_pending_per_tool
+    device_count = len(getattr(manager, "devices", ())) if manager is not None else 0
+    pipeline_capacity = device_count * max(1, max_batch_size) * device_queue_depth
+    return max(minimum, pending_capacity + pipeline_capacity)
 
 
 def run_code_mode_script(
@@ -244,6 +260,8 @@ def serve(
 
     manager = manager_cfg.instantiate() if use_manager else None
     LOGGER.info("Visible devices: %s", _format_visible_devices(manager))
+    registered_fmod_count = 0
+    max_batch_size = 1
     for fm_config in config.fmod_models:
         fm_name = fm_config.tool_name or fm_config.name_or_path
         try:
@@ -262,6 +280,10 @@ def serve(
             else:
                 add_torch_module_tool_to_fastmcp(server, tool)
 
+            registered_fmod_count += 1
+            tool_batch_size = getattr(tool, "batch_size", 1) or 1
+            max_batch_size = max(max_batch_size, max(1, tool_batch_size))
+
             card_locator.register(
                 tool.name or fm_config.name_or_path,
                 source,
@@ -273,6 +295,21 @@ def serve(
 
     if manager:
         manager.add_to_fastmcp(server)
+
+    if registered_fmod_count:
+        task_concurrency = _background_task_concurrency(
+            manager_cfg,
+            manager,
+            number_of_tools=registered_fmod_count,
+            max_batch_size=max_batch_size,
+        )
+        LOGGER.info("FastMCP background task concurrency: %s", task_concurrency)
+        server.add_extension(
+            TasksExtension(
+                url=getattr(manager_cfg, "task_backend_url", "memory://"),
+                concurrency=task_concurrency,
+            )
+        )
 
     if config.search_tool.expose:
         register_search_tool(

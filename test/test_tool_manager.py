@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import inspect
 import threading
 import time
 from collections.abc import Sequence
@@ -7,13 +8,20 @@ from typing import ClassVar
 
 import pytest
 import torch
+from docket import ConcurrencyLimit
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 from pydantic import BaseModel
 
 from nomad import metrics as nomad_metrics
 from nomad.config import ToolManagerConfig
 from nomad.fm_base_tool import TorchModuleTool, default_device
-from nomad.torch_tool_manager import ToolRequest, TorchModelToolManager
+from nomad.torch_tool_manager import (
+    DocketQueueAdmission,
+    DocketQueueReservation,
+    ToolRequest,
+    TorchModelToolManager,
+)
 
 
 class DummyModule(torch.nn.Module):
@@ -435,6 +443,84 @@ async def test_scheduler_reserves_capacity_for_other_queued_tools(
 
 
 @pytest.mark.asyncio()
+async def test_full_tool_queue_raises_server_busy(dummy_tool_factory):
+    manager = TorchModelToolManager(
+        ToolManagerConfig(max_pending_per_tool=1),
+        device_provider=lambda: [torch.device("cpu")],
+    )
+    tool = dummy_tool_factory(label="busy")
+    manager.register_tool("busy", tool, source=DummyTool.clone_sources["busy"])
+
+    loop = asyncio.get_running_loop()
+    await manager._enqueue_request(
+        "busy",
+        ToolRequest(input=DummyInput(value=1), future=loop.create_future()),
+    )
+
+    with pytest.raises(ToolError, match="Server busy"):
+        await manager._enqueue_request(
+            "busy",
+            ToolRequest(input=DummyInput(value=2), future=loop.create_future()),
+        )
+
+    await manager.aclose()
+
+
+@pytest.mark.asyncio()
+async def test_docket_reservation_guarantees_nomad_queue_space(dummy_tool_factory):
+    manager = TorchModelToolManager(
+        ToolManagerConfig(max_pending_per_tool=2),
+        device_provider=lambda: [torch.device("cpu")],
+    )
+    tool = dummy_tool_factory(label="reserved")
+    manager.register_tool("reserved", tool, source=DummyTool.clone_sources["reserved"])
+    loop = asyncio.get_running_loop()
+
+    reservation = DocketQueueReservation(manager, "reserved")
+    assert await manager._reserve_docket_queue_slot("reserved") is True
+    await manager._enqueue_request(
+        "reserved",
+        ToolRequest(input=DummyInput(value=1), future=loop.create_future()),
+    )
+    await manager._enqueue_request(
+        "reserved",
+        ToolRequest(input=DummyInput(value=2), future=loop.create_future()),
+        docket_reservation=reservation,
+    )
+
+    assert reservation.reserved is False
+    assert await manager._reserve_docket_queue_slot("reserved") is False
+    with pytest.raises(ToolError, match="Server busy"):
+        await manager._enqueue_request(
+            "reserved",
+            ToolRequest(input=DummyInput(value=3), future=loop.create_future()),
+        )
+
+    await manager.aclose()
+
+
+def test_managed_fastmcp_tool_limits_docket_to_queue_headroom(dummy_tool_factory):
+    manager = TorchModelToolManager(
+        ToolManagerConfig(max_pending_per_tool=100),
+        device_provider=lambda: [torch.device("cpu")],
+    )
+    tool = dummy_tool_factory(label="docket-limit")
+    manager.register_tool(
+        "docket-limit", tool, source=DummyTool.clone_sources["docket-limit"]
+    )
+
+    fast_tool = manager._build_fastmcp_tool(
+        "docket-limit", manager._tools["docket-limit"]
+    )
+    dependency = inspect.signature(fast_tool.fn).parameters["_task_concurrency"].default
+    admission = inspect.signature(fast_tool.fn).parameters["_task_admission"].default
+
+    assert isinstance(dependency, ConcurrencyLimit)
+    assert dependency.max_concurrent == 75
+    assert isinstance(admission, DocketQueueAdmission)
+
+
+@pytest.mark.asyncio()
 @pytest.mark.gpu
 async def test_tool_execution_does_not_block_event_loop(dummy_tool_factory):
     device = make_accelerator_device(0)
@@ -787,6 +873,7 @@ async def test_disk_idle_unloads_cpu_tool_and_reloads_from_source(
     server = FastMCP()
     fast_tools = manager.add_to_fastmcp(server)
     assert "disk-idle" in fast_tools
+    assert fast_tools["disk-idle"].task_config.mode == "optional"
 
     clock["value"] += 0.1
     await manager._evict_disk_idle_tools(now=clock["value"])
