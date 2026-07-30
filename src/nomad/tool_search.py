@@ -169,7 +169,7 @@ class ToolDescriptor:
 def _tool_schema(tool: Any) -> dict[str, Any]:
     if hasattr(tool, "to_mcp_tool"):
         tool = tool.to_mcp_tool()
-    return tool.model_dump(mode="json")
+    return tool.model_dump(mode="json", by_alias=True)
 
 
 def build_tool_descriptors(

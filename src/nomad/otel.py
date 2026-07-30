@@ -35,19 +35,13 @@ class NoopTracer:
         yield NoopSpan()
 
 
-def _import_trace_api():
-    try:
-        from opentelemetry import trace
-    except ImportError:
-        return None
-    return trace
-
-
 def get_tracer(name: str):
-    trace = _import_trace_api()
-    if trace is None:
+    """Return FastMCP's tracer so custom spans follow its telemetry mode."""
+    try:
+        from fastmcp.telemetry import get_tracer as get_fastmcp_tracer
+    except ImportError:
         return NoopTracer()
-    return trace.get_tracer(name)
+    return get_fastmcp_tracer()
 
 
 def _truthy(value: str | None) -> bool:

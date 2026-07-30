@@ -21,9 +21,6 @@ from ..logging_utils import (
 )
 from ..otel import (
     configure_otel,
-    get_tracer,
-    set_span_error,
-    set_span_ok,
     shutdown_otel,
 )
 from .config import (
@@ -47,7 +44,6 @@ from .tool_index import ToolIndex
 from .upstream import UpstreamProxy
 
 logger = logging.getLogger(__name__)
-tracer = get_tracer("nomad.gateway")
 
 try:
     _PACKAGE_VERSION = version("nomad-scifm")
@@ -198,49 +194,36 @@ class CodeModeGateway:
         """
         start_time = time.perf_counter()
         nomad_metrics.record_gateway_request("execute_mcp_script")
-        with tracer.start_as_current_span(
-            "nomad.gateway.execute_mcp_script",
-            attributes={
-                "nomad.gateway.request_id": str(ctx.request_id),
-                "nomad.gateway.script_path": str(script_path),
-            },
-        ) as span:
-            try:
-                await ctx.info(
-                    "execute_mcp_script started",
-                    extra={"request_id": ctx.request_id, "phase": "start"},
-                )
-                result = await self.run_script(script_path, env)
-                span.set_attribute(
-                    "nomad.gateway.tool_call_count", len(result.tool_calls)
-                )
-                set_span_ok(span)
-                await ctx.info(
-                    "execute_mcp_script completed",
-                    extra={
-                        "request_id": ctx.request_id,
-                        "phase": "end",
-                    },
-                )
-            except TimeoutError as exc:
-                set_span_error(span, exc)
-                nomad_metrics.record_gateway_request_duration(
-                    "execute_mcp_script",
-                    time.perf_counter() - start_time,
-                    status="timeout",
-                )
-                return self._timeout_payload(
-                    exc,
-                    duration_seconds=time.perf_counter() - start_time,
-                )
-            except Exception as exc:
-                set_span_error(span, exc)
-                nomad_metrics.record_gateway_request_duration(
-                    "execute_mcp_script",
-                    time.perf_counter() - start_time,
-                    status="error",
-                )
-                raise
+        try:
+            await ctx.info(
+                "execute_mcp_script started",
+                extra={"request_id": ctx.request_id, "phase": "start"},
+            )
+            result = await self.run_script(script_path, env)
+            await ctx.info(
+                "execute_mcp_script completed",
+                extra={
+                    "request_id": ctx.request_id,
+                    "phase": "end",
+                },
+            )
+        except TimeoutError as exc:
+            nomad_metrics.record_gateway_request_duration(
+                "execute_mcp_script",
+                time.perf_counter() - start_time,
+                status="timeout",
+            )
+            return self._timeout_payload(
+                exc,
+                duration_seconds=time.perf_counter() - start_time,
+            )
+        except Exception:
+            nomad_metrics.record_gateway_request_duration(
+                "execute_mcp_script",
+                time.perf_counter() - start_time,
+                status="error",
+            )
+            raise
 
         nomad_metrics.record_gateway_request_duration(
             "execute_mcp_script",
@@ -291,49 +274,36 @@ class CodeModeGateway:
 
         start_time = time.perf_counter()
         nomad_metrics.record_gateway_request("execute_mcp_code")
-        with tracer.start_as_current_span(
-            "nomad.gateway.execute_mcp_code",
-            attributes={
-                "nomad.gateway.request_id": str(ctx.request_id),
-                "nomad.gateway.code_size": len(code),
-            },
-        ) as span:
-            try:
-                await ctx.info(
-                    "execute_mcp_code started",
-                    extra={"request_id": ctx.request_id, "phase": "start"},
-                )
-                result = await self.run_code(code, env)
-                span.set_attribute(
-                    "nomad.gateway.tool_call_count", len(result.tool_calls)
-                )
-                set_span_ok(span)
-                await ctx.info(
-                    "execute_mcp_code completed",
-                    extra={
-                        "request_id": ctx.request_id,
-                        "phase": "end",
-                    },
-                )
-            except TimeoutError as exc:
-                set_span_error(span, exc)
-                nomad_metrics.record_gateway_request_duration(
-                    "execute_mcp_code",
-                    time.perf_counter() - start_time,
-                    status="timeout",
-                )
-                return self._timeout_payload(
-                    exc,
-                    duration_seconds=time.perf_counter() - start_time,
-                )
-            except Exception as exc:
-                set_span_error(span, exc)
-                nomad_metrics.record_gateway_request_duration(
-                    "execute_mcp_code",
-                    time.perf_counter() - start_time,
-                    status="error",
-                )
-                raise
+        try:
+            await ctx.info(
+                "execute_mcp_code started",
+                extra={"request_id": ctx.request_id, "phase": "start"},
+            )
+            result = await self.run_code(code, env)
+            await ctx.info(
+                "execute_mcp_code completed",
+                extra={
+                    "request_id": ctx.request_id,
+                    "phase": "end",
+                },
+            )
+        except TimeoutError as exc:
+            nomad_metrics.record_gateway_request_duration(
+                "execute_mcp_code",
+                time.perf_counter() - start_time,
+                status="timeout",
+            )
+            return self._timeout_payload(
+                exc,
+                duration_seconds=time.perf_counter() - start_time,
+            )
+        except Exception:
+            nomad_metrics.record_gateway_request_duration(
+                "execute_mcp_code",
+                time.perf_counter() - start_time,
+                status="error",
+            )
+            raise
         nomad_metrics.record_gateway_request_duration(
             "execute_mcp_code",
             time.perf_counter() - start_time,
