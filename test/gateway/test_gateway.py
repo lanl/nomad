@@ -128,7 +128,6 @@ async def gateway(tmp_path: Path):
     config = _build_config(tmp_path)
     async with CodeModeGateway(config) as gateway_obj:
         async with Client(gateway_obj.fastmcp) as client:
-            await client.initialize()
             yield GatewayHarness(client=client, gateway=gateway_obj)
 
 
@@ -141,7 +140,6 @@ async def gateway_with_workspace_venv(tmp_path: Path):
     config = _build_config(tmp_path)
     async with CodeModeGateway(config) as gateway_obj:
         async with Client(gateway_obj.fastmcp) as client:
-            await client.initialize()
             yield GatewayHarness(client=client, gateway=gateway_obj)
 
 
@@ -538,7 +536,6 @@ _os.execv({exec_path!r}, [{exec_path!r}, *_sys.argv[1:]])
 
     async with CodeModeGateway(config) as gateway_obj:
         async with Client(gateway_obj.fastmcp) as client:
-            await client.initialize()
             payload = await client.call_tool(
                 "execute_mcp_code",
                 {
