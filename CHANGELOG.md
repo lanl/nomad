@@ -7,9 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## Changed
+### Added
+
+- Added optional SciFM background tasks with configurable Docket storage and bounded Nomad queue admission ([#7])
+
+### Breaking
+
+- Migrated to the FastMCP v4 beta and MCP 2, with FastMCP owning MCP telemetry and Nomad retaining domain metrics and child spans ([#7])
+
+### Changed
 
 - Enabled [OTEL](https://opentelemetry.io/) logging within the [nomad demo image](ghcr.io/lanl/nomad). Added a docker-compose with a reference observability stack ([#9]).
+- Changed `max_pending_per_tool` to a finite, non-nullable limit and added derived Docket worker concurrency controls ([#7])
 
 ## [v0.2.0] - 2026-07-29
 
@@ -43,5 +52,6 @@ Initial Public Release of Nomad
 [#4]: https://github.com/lanl/nomad/pull/4
 [#5]: https://github.com/lanl/nomad/pull/5
 [#6]: https://github.com/lanl/nomad/pull/6
+[#7]: https://github.com/lanl/nomad/pull/7
 [#8]: https://github.com/lanl/nomad/pull/8
 [#9]: https://github.com/lanl/nomad/pull/9
