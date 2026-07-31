@@ -108,9 +108,14 @@ jobs:
             http://127.0.0.1:3000/api/health
           )
           for endpoint in "${endpoints[@]}"; do
+            expected_status=200
+            if [[ "${endpoint}" == "http://127.0.0.1:38217/mcp" ]]; then
+              expected_status=405
+            fi
             ready=false
             for attempt in {1..60}; do
-              if curl --fail --silent --output /dev/null "${endpoint}"; then
+              status="$(curl --silent --output /dev/null --write-out '%{http_code}' "${endpoint}" || true)"
+              if [[ "${status}" == "${expected_status}" ]]; then
                 ready=true
                 break
               fi
