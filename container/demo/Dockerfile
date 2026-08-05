@@ -45,6 +45,7 @@ COPY src ./src
 COPY container/demo ./container/demo
 
 RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=secret,id=nomad_build_ca,target=/etc/ssl/certs/ca-certificates.crt,required=false \
     uv sync --directory ./container/demo --locked --no-editable \
     && ln -sf $(realpath ./container/demo/.venv/bin/nomad) /usr/local/bin/
 

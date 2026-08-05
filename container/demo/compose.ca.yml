@@ -1,0 +1,12 @@
+services:
+  nomad:
+    build:
+      secrets:
+        - source: nomad_ca
+          target: nomad_build_ca
+    volumes:
+      - ${NOMAD_CA_CERT_PATH:?Set NOMAD_CA_CERT_PATH to a complete PEM bundle}:/etc/ssl/certs/ca-certificates.crt:ro
+
+secrets:
+  nomad_ca:
+    file: ${NOMAD_CA_CERT_PATH:?Set NOMAD_CA_CERT_PATH to a complete PEM bundle}

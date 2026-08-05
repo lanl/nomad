@@ -10,7 +10,12 @@ test *FLAGS:
     uv run --group test pytest --quiet --durations=0 {{ FLAGS }}
 
 build-image:
-    docker buildx build \
+    #!/usr/bin/env bash
+    build_args=()
+    if [[ -n "${NOMAD_CA_CERT_PATH:-}" ]]; then
+        build_args+=(--secret "id=nomad_build_ca,src=${NOMAD_CA_CERT_PATH}")
+    fi
+    docker buildx build "${build_args[@]}" \
         --tag nomad-demo:latest \
         --file ./container/demo/Dockerfile \
         .
