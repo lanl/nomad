@@ -44,10 +44,12 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "release" ]]; then
             image="ghcr.io/${{ github.repository }}:${{ github.event.release.tag_name }}"
+            tags=(--tag "${image}" --tag "ghcr.io/${{ github.repository }}:latest")
             platforms="linux/amd64,linux/arm64"
             output="--push"
           else
             image="nomad-demo:ci"
+            tags=(--tag "${image}")
             platforms="linux/amd64"
             output="--load"
           fi
@@ -59,7 +61,7 @@ jobs:
             )
           fi
           docker buildx build \
-            --tag "${image}" \
+            "${tags[@]}" \
             --platform "${platforms}" \
             "${cache[@]}" \
             --file container/demo/Dockerfile \
