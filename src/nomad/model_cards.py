@@ -10,6 +10,8 @@ from huggingface_hub import hf_hub_download
 from pydantic import Field
 from thefuzz import fuzz, process
 
+from nomad.truststore import configure_network_clients
+
 MODEL_CARD_TOOL_NAME = "get_model_card"
 LOGGER = logging.getLogger(__name__)
 
@@ -57,6 +59,7 @@ class ModelCardLocator:
         if isinstance(repo_id, Path):
             return None
 
+        configure_network_clients()
         try:
             downloaded = hf_hub_download(repo_id=repo_id, filename="README.md")
         except Exception as exc:  # pragma: no cover - exercised via tests with mocking

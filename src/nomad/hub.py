@@ -16,7 +16,7 @@ from oras.auth.utils import get_basic_auth
 from oras.provider import Registry
 
 from nomad.copycow import copy_cow
-from nomad.truststore import TruststoreHTTPAdapter
+from nomad.truststore import TruststoreHTTPAdapter, configure_network_clients
 
 CACHE_LOCK_TIMEOUT_SECONDS = 900
 SUPPORTED_SCHEMES = {"file", "hf", "oras", "git+https", "git+ssh"}
@@ -630,6 +630,7 @@ class HuggingFaceRepoSpec(RepoSpec):
         if self.reference and looks_like_digest(self.reference):
             return self.reference
 
+        configure_network_clients()
         from huggingface_hub import HfApi
 
         model_info_kwargs = {"repo_id": self.location}
@@ -642,6 +643,7 @@ class HuggingFaceRepoSpec(RepoSpec):
 
     def pull(self) -> Path:
         """Download or reuse a Hugging Face snapshot and return its local path."""
+        configure_network_clients()
         from huggingface_hub import snapshot_download
 
         path = Path(
