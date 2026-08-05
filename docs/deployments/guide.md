@@ -95,8 +95,26 @@ For a complete local pipeline, the demo includes a Compose stack with Nomad,
 an OpenTelemetry Collector, Jaeger, Prometheus, and Grafana:
 
 ```shell
-docker compose --file container/demo/compose.yml up --build
+docker compose --file container/demo/compose.yml pull
+docker compose --file container/demo/compose.yml up
 ```
+
+This uses the published `ghcr.io/lanl/nomad:latest` image. Use `--build` only
+when testing local image changes.
+
+By default the Compose stack uses the image's base truststore. If a network
+requires additional TLS certificates, set `NOMAD_CA_CERT_PATH` to a complete
+replacement CA bundle and include the CA overlay. It applies the bundle both
+to local image builds and to runtime model downloads:
+
+```shell
+NOMAD_CA_CERT_PATH=/path/to/ca-bundle.pem \
+  docker compose --file container/demo/compose.yml \
+  --file container/demo/compose.ca.yml up --build
+```
+
+The override mounts the bundle read-only over the image's system trust bundle;
+it is not copied into the image.
 
 Open Grafana at `http://localhost:3000`, Prometheus at
 `http://localhost:9090`, or Jaeger at `http://localhost:16686`. Stop the stack

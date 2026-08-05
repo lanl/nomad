@@ -1,0 +1,52 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 3,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"expr": "sum by (tool) (rate(nomad_tool_requests_total[5m]))", "legendFormat": "{{tool}}", "refId": "A"}],
+      "title": "Tool request rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "id": 4,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"expr": "sum by (tool) (rate(nomad_tool_request_duration_seconds_sum[5m])) / sum by (tool) (rate(nomad_tool_request_duration_seconds_count[5m]))", "legendFormat": "{{tool}}", "refId": "A"}],
+      "title": "Tool latency (mean)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "id": 5,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"expr": "sum by (tool) (nomad_tool_queue_length)", "legendFormat": "{{tool}}", "refId": "A"}, {"expr": "sum by (tool) (nomad_tool_inflight_requests)", "legendFormat": "{{tool}} inflight", "refId": "B"}],
+      "title": "Queue depth and in-flight work",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"max": 1, "min": 0, "unit": "percentunit"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "id": 6,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"expr": "nomad_device_slot_busy_ratio", "legendFormat": "{{device}}", "refId": "A"}],
+      "title": "Device utilization",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "tags": ["nomad", "otel"],
+  "title": "Nomad OpenTelemetry Overview",
+  "uid": "nomad-otel-overview",
+  "version": 1
+}
