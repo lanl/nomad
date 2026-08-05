@@ -16,6 +16,7 @@ from oras.auth.utils import get_basic_auth
 from oras.provider import Registry
 
 from nomad.copycow import copy_cow
+from nomad.truststore import TruststoreHTTPAdapter
 
 CACHE_LOCK_TIMEOUT_SECONDS = 900
 SUPPORTED_SCHEMES = {"file", "hf", "oras", "git+https", "git+ssh"}
@@ -165,6 +166,10 @@ CACHE_ROOT = get_cache_root() / "hub-v1"
 
 class OrasRegistry(Registry):
     """ORAS registry client that refreshes stale bearer tokens after scope changes."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.session.mount("https://", TruststoreHTTPAdapter())
 
     def load_auth_config(self, target, *, config_path: str | None = None):
         container = self.get_container(target)

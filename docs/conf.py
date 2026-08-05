@@ -4,14 +4,10 @@ import sys
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 
-import truststore
 from dotenv import dotenv_values, load_dotenv
 from pygments.lexers import get_lexer_by_name
 from sphinx.errors import SphinxError
 from sphinx.highlighting import lexers
-
-# Use system certificates
-truststore.inject_into_ssl()
 
 project = "Nomad"
 distribution = "nomad-scifm"

@@ -33,6 +33,8 @@ the pinned asciinema webplayer once for the whole site.
 
 ## TLS
 
-The `nomad` CLI installs the system trust store before it creates network
-clients. See {repo_file}`src/nomad/truststore.py <src/nomad/truststore.py>` and
-{repo_file}`src/nomad/__main__.py <src/nomad/__main__.py>`.
+Nomad verifies secure connections using certificates trusted by the operating
+system. Install any organization-specific certificate authorities in the
+system trust store before connecting to private model registries, repositories,
+or MCP servers. For containers, see
+[Passing Custom CA Certificates to the Image](../deployments/guide.md#passing-custom-ca-certificates-to-the-image).
