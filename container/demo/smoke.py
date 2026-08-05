@@ -41,7 +41,7 @@ def http_status(url: str) -> int:
             return response.status
     except urllib.error.HTTPError as error:
         return error.code
-    except urllib.error.URLError:
+    except OSError:
         return 0
 
 
@@ -73,7 +73,7 @@ def call_mist(host: str) -> bool:
                     return not result.get("isError", False) and bool(
                         result.get("content")
                     )
-    except (urllib.error.URLError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError):
         return False
     return False
 
