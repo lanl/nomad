@@ -4,4 +4,7 @@ search_tool:
   expose: true
 tools:
   - nomad_demo.pubchem.search_pubchem
-fmod_models: []
+fmod_models:
+  - model_class: nomad_demo.mist.FinetunedMistModel
+    name_or_path: mist-models/mist-26.9M-kkgx0omx-qm9
+    batch_size: 1

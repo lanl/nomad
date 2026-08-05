@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## Changed
+
+- Enabled [OTEL](https://opentelemetry.io/) logging within the [nomad demo image](ghcr.io/lanl/nomad). Added a docker-compose with a reference observability stack ([#9]).
+
 ## [v0.2.0] - 2026-07-29
 
 ### Added
@@ -40,3 +44,4 @@ Initial Public Release of Nomad
 [#5]: https://github.com/lanl/nomad/pull/5
 [#6]: https://github.com/lanl/nomad/pull/6
 [#8]: https://github.com/lanl/nomad/pull/8
+[#9]: https://github.com/lanl/nomad/pull/9

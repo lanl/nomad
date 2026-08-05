@@ -29,6 +29,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           lfs: true
+      - uses: astral-sh/setup-uv@v7
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
       - name: Log in to GHCR
@@ -43,10 +44,12 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "release" ]]; then
             image="ghcr.io/${{ github.repository }}:${{ github.event.release.tag_name }}"
+            tags=(--tag "${image}" --tag "ghcr.io/${{ github.repository }}:latest")
             platforms="linux/amd64,linux/arm64"
             output="--push"
           else
             image="nomad-demo:ci"
+            tags=(--tag "${image}")
             platforms="linux/amd64"
             output="--load"
           fi
@@ -58,7 +61,7 @@ jobs:
             )
           fi
           docker buildx build \
-            --tag "${image}" \
+            "${tags[@]}" \
             --platform "${platforms}" \
             "${cache[@]}" \
             --file container/demo/Dockerfile \
@@ -67,29 +70,10 @@ jobs:
           echo "image=${image}" >> "${GITHUB_OUTPUT}"
       - name: Smoke test demo image
         run: |
-          container="nomad-demo-smoke"
-          trap 'docker logs "${container}"; docker rm --force "${container}"' EXIT
-          docker run --detach \
-            --name "${container}" \
-            --publish 38217:38217 \
-            "${{ steps.build.outputs.image }}" \
-            serve \
-            --transport=streamable-http \
-            --host=0.0.0.0 \
-            --port=38217 \
-            /nomad/container/demo/nomad-smoke.yml
-
-          for attempt in {1..60}; do
-            if curl --silent --output /dev/null http://127.0.0.1:38217/mcp; then
-              exit 0
-            fi
-            if [[ "$(docker inspect --format '{{.State.Running}}' "${container}")" != "true" ]]; then
-              exit 1
-            fi
-            sleep 5
-          done
-          echo "Server did not start within 5 minutes" >&2
-          exit 1
+          uv run container/demo/smoke.py image --host 127.0.0.1 --image "${{ steps.build.outputs.image }}"
+      - name: Smoke test observability stack
+        run: |
+          uv run container/demo/smoke.py observability --host 127.0.0.1 --image "${{ steps.build.outputs.image }}"
       - name: Resolve image digest
         id: digest
         if: github.event_name == 'release'

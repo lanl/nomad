@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: Nomad
+    orgId: 1
+    folder: Nomad
+    type: file
+    allowUiUpdates: true
+    disableDeletion: true
+    updateIntervalSeconds: 10
+    options:
+      path: /var/lib/grafana/dashboards
