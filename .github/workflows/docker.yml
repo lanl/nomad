@@ -69,15 +69,11 @@ jobs:
             .
           echo "image=${image}" >> "${GITHUB_OUTPUT}"
       - name: Smoke test demo image
-        run: >
-          uv run container/demo/smoke.py image
-          --host 127.0.0.1
-          --image "${{ steps.build.outputs.image }}"
+        run: |
+          uv run container/demo/smoke.py image --host 127.0.0.1 --image "${{ steps.build.outputs.image }}"
       - name: Smoke test observability stack
-        run: >
-          uv run container/demo/smoke.py observability
-          --host 127.0.0.1
-          --image "${{ steps.build.outputs.image }}"
+        run: |
+          uv run container/demo/smoke.py observability --host 127.0.0.1 --image "${{ steps.build.outputs.image }}"
       - name: Resolve image digest
         id: digest
         if: github.event_name == 'release'

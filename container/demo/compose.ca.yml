@@ -1,3 +1,4 @@
+# Optional overlay that uses NOMAD_CA_CERT_PATH for both the BuildKit secret and runtime system trust bundle.
 services:
   nomad:
     build:

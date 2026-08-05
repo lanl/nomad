@@ -1,3 +1,4 @@
+# Default Nomad demo and local observability stack; use compose.ca.yml only when replacing the system CA bundle.
 services:
   nomad:
     image: ${NOMAD_DEMO_IMAGE:-ghcr.io/lanl/nomad:latest}
