@@ -85,6 +85,35 @@ def test_configure_huggingface_http_uses_httpx_client_factory(monkeypatch):
     assert calls["async_factory"] is truststore._huggingface_async_httpx_client_factory
 
 
+async def test_huggingface_async_client_preserves_hooks_and_environment_proxy(
+    monkeypatch,
+):
+    from huggingface_hub.utils._http import (
+        async_hf_request_event_hook,
+        async_hf_response_event_hook,
+    )
+
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    monkeypatch.setattr(truststore, "ssl_context", lambda: context)
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:8080")
+    monkeypatch.delenv("NO_PROXY", raising=False)
+
+    client = truststore._huggingface_async_httpx_client_factory()
+    try:
+        assert client._transport._pool._ssl_context is context
+        assert client._event_hooks == {
+            "request": [async_hf_request_event_hook],
+            "response": [async_hf_response_event_hook],
+        }
+        assert any(
+            getattr(pattern, "pattern", None) == "https://"
+            and isinstance(transport, httpx.AsyncHTTPTransport)
+            for pattern, transport in client._mounts.items()
+        )
+    finally:
+        await client.aclose()
+
+
 def test_oras_uses_truststore_http_adapter():
     registry = hub.OrasRegistry()
 
