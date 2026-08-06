@@ -5,9 +5,12 @@ import sys
 import types
 
 import httpx
+import pytest
 import requests
-from fastmcp.client.transports import StreamableHttpTransport
+from fastmcp.client.auth.oauth import OAuth
+from fastmcp.client.transports import SSETransport, StreamableHttpTransport
 from fastmcp.mcp_config import RemoteMCPServer
+from requests.adapters import HTTPAdapter
 
 from nomad import hub, truststore
 from nomad.gateway import upstream
@@ -122,26 +125,63 @@ def test_oras_uses_truststore_http_adapter():
     )
 
 
-async def test_fastmcp_transport_uses_truststore_context(monkeypatch):
+def test_legacy_huggingface_session_uses_truststore_adapter(monkeypatch):
+    from huggingface_hub import constants
+
+    fake_http = types.ModuleType("huggingface_hub.utils._http")
+
+    class OfflineAdapter(HTTPAdapter):
+        pass
+
+    class UniqueRequestIdAdapter(HTTPAdapter):
+        pass
+
+    fake_http.OfflineAdapter = OfflineAdapter
+    fake_http.UniqueRequestIdAdapter = UniqueRequestIdAdapter
+    monkeypatch.setitem(sys.modules, "huggingface_hub.utils._http", fake_http)
+    monkeypatch.setattr(constants, "HF_HUB_OFFLINE", False)
+
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    captured = {}
+    monkeypatch.setattr(truststore, "ssl_context", lambda: context)
+    session = truststore._huggingface_requests_session_factory()
+    adapter = session.adapters["https://"]
+    request = requests.Request("GET", "https://example.test").prepare()
 
-    class FakeClient:
-        def __init__(self, transport, *, name, verify):
-            captured["transport"] = transport
-            captured["name"] = name
-            captured["verify"] = verify
+    _, pool_kwargs = adapter.build_connection_pool_key_attributes(request, True)
 
-        async def __aenter__(self):
-            return self
+    assert isinstance(adapter, UniqueRequestIdAdapter)
+    assert pool_kwargs["ssl_context"] is context
+
+
+@pytest.mark.parametrize(
+    ("url", "transport_type"),
+    [
+        ("https://example.test/mcp", StreamableHttpTransport),
+        ("https://example.test/sse", SSETransport),
+    ],
+)
+async def test_fastmcp_transport_and_oauth_use_truststore_context(
+    monkeypatch, url, transport_type
+):
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+    async def fake_enter(client):
+        return client
 
     monkeypatch.setattr(upstream, "ssl_context", lambda: context)
-    monkeypatch.setattr(upstream, "Client", FakeClient)
-    proxy = upstream.UpstreamProxy(
-        {"secure": RemoteMCPServer(url="https://example.test/mcp")}
-    )
+    monkeypatch.setattr(upstream.Client, "__aenter__", fake_enter)
+    proxy = upstream.UpstreamProxy({"secure": RemoteMCPServer(url=url, auth="oauth")})
 
-    await proxy.start()
+    with pytest.warns(UserWarning, match="in-memory token storage"):
+        await proxy.start()
 
-    assert isinstance(captured["transport"], StreamableHttpTransport)
-    assert captured["verify"] is context
+    client = proxy._clients["secure"]
+    assert isinstance(client.transport, transport_type)
+    assert client.transport.verify is context
+    assert isinstance(client.transport.auth, OAuth)
+
+    oauth_client = client.transport.auth.httpx_client_factory()
+    try:
+        assert oauth_client._transport._pool._ssl_context is context
+    finally:
+        await oauth_client.aclose()

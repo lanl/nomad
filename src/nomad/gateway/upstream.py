@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 from fastmcp import Client
-from fastmcp.client.transports import StreamableHttpTransport
+from fastmcp.client.transports import SSETransport, StreamableHttpTransport
 from mcp.types import CallToolResult, Tool
 
 from ..common.upstream_errors import UpstreamConnectionError
@@ -51,7 +51,9 @@ class UpstreamProxy:
 
         transport = params.to_transport()
         verify = (
-            ssl_context() if isinstance(transport, StreamableHttpTransport) else None
+            ssl_context()
+            if isinstance(transport, StreamableHttpTransport | SSETransport)
+            else None
         )
         client = Client(transport, name=server, verify=verify)
         try:
