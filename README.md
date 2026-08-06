@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/lanl/nomad/main/assets/icon.png" alt="Nomad icon" width="96">
+  <img src="assets/icon.png" alt="Nomad icon" width="96">
 </p>
 
 # Nomad
@@ -10,9 +10,9 @@ PyTorch-backed scientific tools over the [Model Context Protocol
 typed Python callables inside a code-execution sandbox.
 
 [Documentation site](https://lanl.github.io/nomad) |
-[Getting started](https://lanl.github.io/nomad/guides/getting-started.html) |
-[Model builder guide](https://lanl.github.io/nomad/guides/model-builder.html) |
-[Reference](https://lanl.github.io/nomad/reference/index.html)
+[Getting started](docs/guides/getting-started.md) |
+[Model builder guide](docs/guides/model-builder.md) |
+[Reference](docs/reference/index.md)
 
 ## What Nomad does
 
@@ -52,20 +52,20 @@ npx @modelcontextprotocol/inspector -- \
 ```
 
 For the HTTP workflow and matching [URSA](https://github.com/lanl/ursa) configs, see
-[Starting a Nomad server](https://lanl.github.io/nomad/guides/getting-started.html#starting-a-nomad-server)
+[Starting a Nomad server](docs/guides/getting-started.md#starting-a-nomad-server)
 and
-[Connect to a hosted Nomad server](https://lanl.github.io/nomad/guides/getting-started.html#connect-to-a-hosted-nomad-server).
+[Connect to a hosted Nomad server](docs/guides/getting-started.md#connect-to-a-hosted-nomad-server).
 
 ## Start here by task
 
 | If you want to... | Start here |
 | --- | --- |
-| Connect to a running Nomad server | [Getting started](https://lanl.github.io/nomad/guides/getting-started.html) |
-| Host a new SciFM | [Model builder guide](https://lanl.github.io/nomad/guides/model-builder.html) |
-| Use Nomad for Inference | [Nomad inference notebook](https://lanl.github.io/nomad/guides/nomad_inference.html) |
-| Browse CLI, config, and API docs | [Reference](https://lanl.github.io/nomad/reference/index.html) |
-| Run the demo deployment | [Deployments](https://lanl.github.io/nomad/deployments/index.html) |
-| Work on Nomad itself | [Developer docs](https://lanl.github.io/nomad/guides/developer.html) |
+| Connect to a running Nomad server | [Getting started](docs/guides/getting-started.md) |
+| Host a new SciFM | [Model builder guide](docs/guides/model-builder.md) |
+| Use Nomad for Inference | [Nomad inference notebook](docs/guides/nomad_inference.ipynb) |
+| Browse CLI, config, and API docs | [Reference](docs/reference/index.md) |
+| Run the demo deployment | [Deployments](docs/deployments/index.md) |
+| Work on Nomad itself | [Developer docs](docs/guides/developer.md) |
 
 ## Development
 
