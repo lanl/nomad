@@ -50,9 +50,8 @@ class UpstreamProxy:
             raise KeyError(f"Unknown upstream server '{server}'")
 
         transport = params.to_transport()
-        if isinstance(transport, StreamableHttpTransport):
-            transport.verify = ssl_context()
-        client = Client(transport, name=server)
+        verify = ssl_context() if isinstance(transport, StreamableHttpTransport) else None
+        client = Client(transport, name=server, verify=verify)
         try:
             await client.__aenter__()
         except Exception as exc:

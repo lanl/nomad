@@ -127,9 +127,10 @@ async def test_fastmcp_transport_uses_truststore_context(monkeypatch):
     captured = {}
 
     class FakeClient:
-        def __init__(self, transport, *, name):
+        def __init__(self, transport, *, name, verify):
             captured["transport"] = transport
             captured["name"] = name
+            captured["verify"] = verify
 
         async def __aenter__(self):
             return self
@@ -143,4 +144,4 @@ async def test_fastmcp_transport_uses_truststore_context(monkeypatch):
     await proxy.start()
 
     assert isinstance(captured["transport"], StreamableHttpTransport)
-    assert captured["transport"].verify is context
+    assert captured["verify"] is context
