@@ -37,6 +37,14 @@ class TruststoreHTTPAdapter(HTTPAdapter):
             proxies=proxies,
         )
 
+    def proxy_manager_for(self, proxy, **proxy_kwargs):
+        proxy_kwargs.pop("proxy_ssl_context", None)
+        return super().proxy_manager_for(
+            proxy,
+            proxy_ssl_context=ssl_context(),
+            **proxy_kwargs,
+        )
+
     def build_connection_pool_key_attributes(self, request, verify, cert=None):
         host_params, pool_kwargs = super().build_connection_pool_key_attributes(
             request, verify, cert

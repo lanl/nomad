@@ -10,7 +10,7 @@ import requests
 from fastmcp.client.auth.oauth import OAuth
 from fastmcp.client.transports import SSETransport, StreamableHttpTransport
 from fastmcp.mcp_config import RemoteMCPServer
-from requests.adapters import HTTPAdapter
+from urllib3.response import HTTPResponse
 
 from nomad import hub, otel, truststore
 from nomad.gateway import upstream
@@ -38,66 +38,53 @@ def test_ssl_context_is_os_backed_and_ignores_certificate_environment(monkeypatc
     assert context.check_hostname is True
 
 
-def test_requests_adapter_uses_truststore_context_when_verifying(monkeypatch):
+def test_requests_adapter_uses_truststore_for_https_proxy(monkeypatch):
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     monkeypatch.setattr(truststore, "ssl_context", lambda: context)
-    adapter = truststore.TruststoreHTTPAdapter()
-    request = requests.Request("GET", "https://example.test").prepare()
 
-    _, pool_kwargs = adapter.build_connection_pool_key_attributes(request, verify=True)
+    manager = truststore.TruststoreHTTPAdapter().proxy_manager_for(
+        "https://proxy.example:8443",
+        proxy_ssl_context=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
+    )
 
-    assert pool_kwargs["ssl_context"] is context
+    assert manager.proxy_ssl_context is context
 
 
 @pytest.mark.parametrize("verify", [False, "/alternate/ca.pem"])
-def test_requests_adapter_ignores_alternate_verify_setting(monkeypatch, verify):
+def test_requests_session_send_forces_truststore_verification(monkeypatch, verify):
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     monkeypatch.setattr(truststore, "ssl_context", lambda: context)
     adapter = truststore.TruststoreHTTPAdapter()
-    request = requests.Request("GET", "https://example.test").prepare()
-
-    _, pool_kwargs = adapter.build_connection_pool_key_attributes(request, verify)
-
-    assert pool_kwargs["ssl_context"] is context
-    assert "ca_certs" not in pool_kwargs
-    assert "ca_cert_dir" not in pool_kwargs
-    assert "cert_reqs" not in pool_kwargs
-
-
-@pytest.mark.parametrize("verify", [False, "/alternate/ca.pem"])
-def test_requests_adapter_forces_verification_when_sending(monkeypatch, verify):
     captured = {}
 
-    def fake_send(self, request, **kwargs):
-        captured.update(kwargs)
-        return object()
+    class FakePool:
+        cert_reqs = None
+        ca_certs = None
+        ca_cert_dir = None
+        cert_file = None
+        key_file = None
 
-    monkeypatch.setattr(HTTPAdapter, "send", fake_send)
-    adapter = truststore.TruststoreHTTPAdapter()
-    request = requests.Request("GET", "https://example.test").prepare()
+        def urlopen(self, **kwargs):
+            return HTTPResponse(status=200, body=b"", preload_content=False)
 
-    adapter.send(request, verify=verify)
+    def connection_from_host(host, port=None, scheme="http", pool_kwargs=None):
+        captured.update(pool_kwargs or {})
+        return FakePool()
 
-    assert captured["verify"] is True
-
-
-@pytest.mark.parametrize("variable", ["REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"])
-def test_requests_adapter_ignores_environment_ca_bundle(monkeypatch, variable):
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    monkeypatch.setattr(truststore, "ssl_context", lambda: context)
-    monkeypatch.setenv(variable, "/alternate/ca.pem")
+    monkeypatch.setattr(
+        adapter.poolmanager, "connection_from_host", connection_from_host
+    )
     session = requests.Session()
-    session.mount("https://", truststore.TruststoreHTTPAdapter())
+    session.mount("https://", adapter)
     request = requests.Request("GET", "https://example.test").prepare()
-    settings = session.merge_environment_settings(request.url, {}, None, None, None)
 
-    _, pool_kwargs = session.get_adapter(
-        request.url
-    ).build_connection_pool_key_attributes(request, settings["verify"])
+    response = session.send(request, verify=verify, stream=True)
 
-    assert settings["verify"] == "/alternate/ca.pem"
-    assert pool_kwargs["ssl_context"] is context
-    assert "ca_certs" not in pool_kwargs
+    assert response.status_code == 200
+    assert captured["ssl_context"] is context
+    assert "ca_certs" not in captured
+    assert "ca_cert_dir" not in captured
+    assert "cert_reqs" not in captured
 
 
 def test_configure_huggingface_http_uses_httpx_client_factory(monkeypatch):
@@ -114,14 +101,22 @@ def test_configure_huggingface_http_uses_httpx_client_factory(monkeypatch):
     fake_huggingface_hub.set_async_client_factory = set_async_client_factory
     monkeypatch.setitem(sys.modules, "huggingface_hub", fake_huggingface_hub)
 
+    for variable in (
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "NO_PROXY",
+        "no_proxy",
+    ):
+        monkeypatch.delenv(variable, raising=False)
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:8080")
-    monkeypatch.delenv("NO_PROXY", raising=False)
     poison_certificate_environment(monkeypatch)
-    contexts = []
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 
     def make_context():
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        contexts.append(context)
         return context
 
     monkeypatch.setattr(truststore, "ssl_context", make_context)
@@ -132,12 +127,14 @@ def test_configure_huggingface_http_uses_httpx_client_factory(monkeypatch):
     try:
         assert isinstance(client, httpx.Client)
         assert client.follow_redirects is True
-        assert any(
-            getattr(pattern, "pattern", None) == "https://"
-            and isinstance(transport, httpx.HTTPTransport)
+        https_transport = next(
+            transport
             for pattern, transport in client._mounts.items()
+            if getattr(pattern, "pattern", None) == "https://"
         )
-        assert len(contexts) >= 2
+        assert isinstance(https_transport, httpx.HTTPTransport)
+        assert client._transport._pool._ssl_context is context
+        assert https_transport._pool._ssl_context is context
     finally:
         client.close()
 
@@ -205,24 +202,22 @@ def test_otlp_exporter_uses_truststore_and_signal_endpoint():
 
 
 def test_legacy_huggingface_session_uses_truststore_adapter(monkeypatch):
-    from huggingface_hub import constants
+    import huggingface_hub
 
-    fake_http = types.ModuleType("huggingface_hub.utils._http")
+    if not hasattr(huggingface_hub, "configure_http_backend"):
+        pytest.skip("requires the legacy Hugging Face Requests backend")
 
-    class OfflineAdapter(HTTPAdapter):
-        pass
-
-    class UniqueRequestIdAdapter(HTTPAdapter):
-        pass
-
-    fake_http.OfflineAdapter = OfflineAdapter
-    fake_http.UniqueRequestIdAdapter = UniqueRequestIdAdapter
-    monkeypatch.setitem(sys.modules, "huggingface_hub.utils._http", fake_http)
-    monkeypatch.setattr(constants, "HF_HUB_OFFLINE", False)
+    from huggingface_hub.utils._http import (
+        UniqueRequestIdAdapter,
+        get_session,
+        reset_sessions,
+    )
 
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     monkeypatch.setattr(truststore, "ssl_context", lambda: context)
-    session = truststore._huggingface_requests_session_factory()
+    truststore.configure_huggingface_http()
+    reset_sessions()
+    session = get_session()
     adapter = session.adapters["https://"]
     request = requests.Request("GET", "https://example.test").prepare()
 

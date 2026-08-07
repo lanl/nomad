@@ -9,6 +9,10 @@ lint:
 test *FLAGS:
     uv run --extra otel --group test pytest --quiet --durations=0 {{ FLAGS }}
 
+test-compat:
+    uv run --with huggingface-hub==0.34.0 --extra otel --group test \
+        pytest --quiet test/test_truststore.py -k legacy_huggingface_session
+
 build-image:
     #!/usr/bin/env bash
     build_args=()

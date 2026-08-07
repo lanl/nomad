@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from hashlib import blake2b
 from os import environ
@@ -29,10 +32,17 @@ _GIT_CERTIFICATE_ENVIRONMENT_VARIABLES = frozenset(
         "GIT_SSL_CAINFO",
         "GIT_SSL_CAPATH",
         "GIT_SSL_NO_VERIFY",
+        "GIT_PROXY_SSL_CAINFO",
         "REQUESTS_CA_BUNDLE",
         "SSL_CERT_DIR",
         "SSL_CERT_FILE",
     }
+)
+_GIT_TLS_CONFIG_SUFFIXES = (
+    ".proxysslcainfo",
+    ".sslcainfo",
+    ".sslcapath",
+    ".sslverify",
 )
 
 
@@ -260,12 +270,20 @@ def run(
         "text": True,
         "check": True,
     }
-    child_env = {**environ, **(env or {})}
+    child_env = dict(environ)
     if cmd and Path(cmd[0]).name == "git":
+        child_env.update(env or {})
         # Git cannot consume a Python SSLContext. Let its native TLS backend
         # use the host trust store without inherited CA overrides.
         for name in _GIT_CERTIFICATE_ENVIRONMENT_VARIABLES:
             child_env.pop(name, None)
+        for name in tuple(child_env):
+            if name in {"GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"} or name.startswith(
+                ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
+            ):
+                child_env.pop(name, None)
+    else:
+        child_env.update(env or {})
     if env is not None or (cmd and Path(cmd[0]).name == "git"):
         kwargs["env"] = child_env
     if capture:
@@ -283,6 +301,51 @@ def run(
         logging.error("%s\n%s", str(e), e.stderr)
         raise
     return result.stdout.strip() if capture else ""
+
+
+@contextmanager
+def _sanitized_git_environment(*, cwd: Path | None):
+    result = subprocess.run(
+        ["git", "config", "--show-scope", "--null", "--list", "--includes"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    fields = iter(result.stdout.split("\0"))
+    entries = []
+    for scope, entry in zip(fields, fields, strict=False):
+        key, separator, value = entry.partition("\n")
+        if (
+            separator
+            and scope not in {"local", "worktree"}
+            and not key.lower().startswith(("include.", "includeif."))
+            and not key.lower().endswith(_GIT_TLS_CONFIG_SUFFIXES)
+        ):
+            entries.append((key, value))
+
+    with tempfile.TemporaryDirectory(prefix="nomad-git-config-") as directory:
+        config = Path(directory) / "config"
+        for key, value in entries:
+            subprocess.run(
+                ["git", "config", "--file", str(config), "--add", key, value],
+                check=True,
+            )
+        yield {
+            "GIT_CONFIG_SYSTEM": str(config),
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "0",
+        }
+
+
+def run_git_network(
+    args: list[str], *, url: str, cwd: Path | None = None, capture: bool = False
+) -> str:
+    may_use_https = url.lower().startswith("https://") or args[:2] == ["lfs", "pull"]
+    if not may_use_https:
+        return run(["git", *args], cwd=cwd, capture=capture)
+    with _sanitized_git_environment(cwd=cwd) as env:
+        return run(["git", *args], cwd=cwd, capture=capture, env=env)
 
 
 def check_dependencies() -> None:
@@ -732,7 +795,13 @@ class GitRepoSpec(RepoSpec):
             return self.reference
 
         ref = self.reference or "HEAD"
-        output = run(["git", "ls-remote", self.location, ref], capture=True)
+        with tempfile.TemporaryDirectory(prefix="nomad-git-ls-remote-") as directory:
+            output = run_git_network(
+                ["ls-remote", self.location, ref],
+                url=self.location,
+                cwd=Path(directory),
+                capture=True,
+            )
         if not output:
             sys.exit(f"Could not resolve ref '{ref}'")
         return output.split()[0]
@@ -773,8 +842,9 @@ class GitRepoSpec(RepoSpec):
                         ["git", "remote", "add", "origin", self.location],
                         cwd=cache_dir_tmp,
                     )
-                    run(
-                        ["git", "fetch", "--depth", "1", "origin", commit],
+                    run_git_network(
+                        ["fetch", "--depth", "1", self.location, commit],
+                        url=self.location,
                         cwd=cache_dir_tmp,
                     )
                     run(
@@ -783,7 +853,11 @@ class GitRepoSpec(RepoSpec):
                         env={"GIT_LFS_SKIP_SMUDGE": "1"},
                     )
                     try:
-                        run(self._lfs_pull_cmd(), cwd=cache_dir_tmp)
+                        run_git_network(
+                            self._lfs_pull_cmd()[1:],
+                            url=self.location,
+                            cwd=cache_dir_tmp,
+                        )
                     except subprocess.CalledProcessError as e:
                         if self.scheme == "git+ssh":
                             LOGGER.error(
