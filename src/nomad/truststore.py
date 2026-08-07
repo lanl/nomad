@@ -96,19 +96,26 @@ def _huggingface_httpx_client_factory():
 
 def _huggingface_async_httpx_client_factory():
     import httpx
-    from huggingface_hub.utils._http import (
-        async_hf_request_event_hook,
-        async_hf_response_event_hook,
-    )
+
+    event_hooks = {}
+    try:
+        from huggingface_hub.utils._http import (
+            async_hf_request_event_hook,
+            async_hf_response_event_hook,
+        )
+    except ImportError:
+        pass
+    else:
+        event_hooks = {
+            "request": [async_hf_request_event_hook],
+            "response": [async_hf_response_event_hook],
+        }
 
     return httpx.AsyncClient(
         verify=ssl_context(),
         follow_redirects=True,
         timeout=None,
-        event_hooks={
-            "request": [async_hf_request_event_hook],
-            "response": [async_hf_response_event_hook],
-        },
+        event_hooks=event_hooks,
     )
 
 

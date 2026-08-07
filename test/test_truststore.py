@@ -157,6 +157,20 @@ async def test_huggingface_async_client_preserves_hooks_and_environment_proxy(
         await client.aclose()
 
 
+async def test_huggingface_async_client_supports_versions_without_hooks(monkeypatch):
+    fake_http = types.ModuleType("huggingface_hub.utils._http")
+    monkeypatch.setitem(sys.modules, "huggingface_hub.utils._http", fake_http)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    monkeypatch.setattr(truststore, "ssl_context", lambda: context)
+
+    client = truststore._huggingface_async_httpx_client_factory()
+    try:
+        assert client._transport._pool._ssl_context is context
+        assert client._event_hooks == {"request": [], "response": []}
+    finally:
+        await client.aclose()
+
+
 def test_oras_uses_truststore_http_adapter():
     registry = hub.OrasRegistry()
 
