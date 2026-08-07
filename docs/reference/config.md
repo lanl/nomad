@@ -26,7 +26,7 @@ search_tool:
 telemetry:
   enabled: true
   service_name: nomad
-  otlp_endpoint: http://127.0.0.1:4317
+  otlp_endpoint: http://127.0.0.1:4318
 tools:
   - my_package.tools.health_check
 fmod_models:
@@ -84,7 +84,7 @@ defaults:
 telemetry:
   enabled: true
   service_name: nomad-gateway
-  otlp_endpoint: http://127.0.0.1:4317
+  otlp_endpoint: http://127.0.0.1:4318
 ```
 
 `transport` is `stdio` or `http` in gateway config files. Legacy
@@ -98,7 +98,7 @@ The gateway emits OpenTelemetry metrics and spans for MCP tool entrypoints,
 sandbox runs, and upstream MCP tool calls. See {doc}`otel` for the full metric
 reference.
 
-Nomad configures OTLP/gRPC trace and metric exporters when `telemetry.enabled`
+Nomad configures OTLP/HTTP trace and metric exporters when `telemetry.enabled`
 is `true`, `NOMAD_OTEL_ENABLED=true`, or standard OTel environment variables
 such as `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, or
 `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_TRACES_EXPORTER`, or

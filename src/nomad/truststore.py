@@ -23,8 +23,12 @@ class TruststoreHTTPAdapter(HTTPAdapter):
         host_params, pool_kwargs = super().build_connection_pool_key_attributes(
             request, verify, cert
         )
-        if verify is True:
-            pool_kwargs["ssl_context"] = ssl_context()
+        # Requests resolves REQUESTS_CA_BUNDLE/CURL_CA_BUNDLE into ``verify``
+        # before the adapter sees the request. Discard every CA-file setting so
+        # this adapter always has one trust source: the operating-system store.
+        for key in ("ca_certs", "ca_cert_dir", "cert_reqs"):
+            pool_kwargs.pop(key, None)
+        pool_kwargs["ssl_context"] = ssl_context()
         return host_params, pool_kwargs
 
 

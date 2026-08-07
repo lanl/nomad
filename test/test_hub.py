@@ -507,6 +507,37 @@ def test_run_merges_extra_environment(monkeypatch):
     hub.run(["env"], env={"NOMAD_TEST_ENV": "ready"})
 
 
+def test_run_removes_certificate_overrides_from_git_environment(monkeypatch):
+    certificate_variables = {
+        "CURL_CA_BUNDLE",
+        "GIT_SSL_CAINFO",
+        "GIT_SSL_CAPATH",
+        "GIT_SSL_NO_VERIFY",
+        "REQUESTS_CA_BUNDLE",
+        "SSL_CERT_DIR",
+        "SSL_CERT_FILE",
+    }
+    for name in certificate_variables:
+        monkeypatch.setenv(name, "/alternate/certificates")
+
+    def fake_run(cmd, cwd=None, text=False, env=None, **kwargs):
+        assert cmd == ["git", "ls-remote", "https://example.test/repo.git"]
+        assert env is not None
+        assert certificate_variables.isdisjoint(env)
+        assert env["GIT_LFS_SKIP_SMUDGE"] == "1"
+        return SimpleNamespace(returncode=0, stdout="")
+
+    monkeypatch.setattr(hub.subprocess, "run", fake_run)
+
+    hub.run(
+        ["git", "ls-remote", "https://example.test/repo.git"],
+        env={
+            "GIT_LFS_SKIP_SMUDGE": "1",
+            "GIT_SSL_CAINFO": "/explicit/alternate.pem",
+        },
+    )
+
+
 def test_run_raises_when_command_missing(monkeypatch, caplog):
     def fake_run(*args, **kwargs):
         raise FileNotFoundError

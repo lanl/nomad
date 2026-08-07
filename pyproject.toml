@@ -28,8 +28,8 @@ otel = [
     "opentelemetry-api>=1.40.0",
     # SDK providers and processors/readers that collect telemetry in-process.
     "opentelemetry-sdk>=1.40.0",
-    # OTLP/gRPC exporters for sending traces and metrics to a collector.
-    "opentelemetry-exporter-otlp-proto-grpc>=1.40.0",
+    # OTLP/HTTP exporters for sending traces and metrics to a collector.
+    "opentelemetry-exporter-otlp-proto-http>=1.40.0",
 ]
 
 [project.urls]

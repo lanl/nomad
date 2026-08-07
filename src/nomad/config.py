@@ -270,7 +270,7 @@ class TelemetryConfig(BaseModel):
     """OpenTelemetry service.name for server spans and metrics."""
 
     otlp_endpoint: str | None = None
-    """Optional OTLP/gRPC endpoint. Environment variables are used when unset."""
+    """Optional OTLP/HTTP endpoint. Environment variables are used when unset."""
 
 
 class SearchWeights(BaseModel):

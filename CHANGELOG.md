@@ -10,7 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Changed
 
 - Enabled [OTEL](https://opentelemetry.io/) logging within the [nomad demo image](ghcr.io/lanl/nomad). Added a docker-compose with a reference observability stack ([#9]).
-- Use the operating system trust store for Hugging Face, MCP/FastMCP, and ORAS HTTPS connections ([#10]).
+- Use the operating system trust store for Hugging Face, MCP/FastMCP, ORAS,
+  Git, and OpenTelemetry HTTPS connections, ignoring alternate CA overrides
+  inherited from the environment ([#10]).
 
 ## [v0.2.0] - 2026-07-29
 

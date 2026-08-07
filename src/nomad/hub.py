@@ -23,6 +23,18 @@ SUPPORTED_SCHEMES = {"file", "hf", "oras", "git+https", "git+ssh"}
 
 LOGGER = logging.getLogger(__name__)
 
+_GIT_CERTIFICATE_ENVIRONMENT_VARIABLES = frozenset(
+    {
+        "CURL_CA_BUNDLE",
+        "GIT_SSL_CAINFO",
+        "GIT_SSL_CAPATH",
+        "GIT_SSL_NO_VERIFY",
+        "REQUESTS_CA_BUNDLE",
+        "SSL_CERT_DIR",
+        "SSL_CERT_FILE",
+    }
+)
+
 
 def looks_like_digest(value: str) -> bool:
     """Return True when ``value`` looks like a bare or algorithm-prefixed digest."""
@@ -248,8 +260,14 @@ def run(
         "text": True,
         "check": True,
     }
-    if env is not None:
-        kwargs["env"] = {**environ, **env}
+    child_env = {**environ, **(env or {})}
+    if cmd and Path(cmd[0]).name == "git":
+        # Git cannot consume a Python SSLContext. Let its native TLS backend
+        # use the host trust store without inherited CA overrides.
+        for name in _GIT_CERTIFICATE_ENVIRONMENT_VARIABLES:
+            child_env.pop(name, None)
+    if env is not None or (cmd and Path(cmd[0]).name == "git"):
+        kwargs["env"] = child_env
     if capture:
         kwargs["capture_output"] = True
     else:

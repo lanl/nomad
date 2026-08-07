@@ -5,6 +5,8 @@ import logging
 import os
 from typing import Any
 
+from .truststore import TruststoreHTTPAdapter
+
 logger = logging.getLogger(__name__)
 
 _CONFIGURED_PROVIDER: Any | None = None
@@ -76,6 +78,25 @@ def _otel_requested(enabled: bool | None) -> bool:
     )
 
 
+def _otlp_http_session():
+    import requests
+
+    session = requests.Session()
+    session.mount("https://", TruststoreHTTPAdapter())
+    return session
+
+
+def _otlp_signal_endpoint(endpoint: str, signal: str) -> str:
+    return f"{endpoint.rstrip('/')}/v1/{signal}"
+
+
+def _otlp_exporter_kwargs(endpoint: str | None, signal: str) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {"session": _otlp_http_session()}
+    if endpoint:
+        kwargs["endpoint"] = _otlp_signal_endpoint(endpoint, signal)
+    return kwargs
+
+
 def configure_otel(
     *,
     service_name: str,
@@ -98,10 +119,10 @@ def configure_otel(
 
     try:
         from opentelemetry import metrics, trace
-        from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+        from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
             OTLPMetricExporter,
         )
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
             OTLPSpanExporter,
         )
         from opentelemetry.sdk.metrics import MeterProvider
@@ -124,10 +145,6 @@ def configure_otel(
             "service.version": service_version,
         }
     )
-    exporter_kwargs = {}
-    if otlp_endpoint:
-        exporter_kwargs["endpoint"] = otlp_endpoint
-
     configured = False
     existing_provider = trace.get_tracer_provider()
     if _CONFIGURED_PROVIDER is None and existing_provider.__class__.__name__ == (
@@ -135,7 +152,9 @@ def configure_otel(
     ):
         provider = TracerProvider(resource=resource)
         provider.add_span_processor(
-            BatchSpanProcessor(OTLPSpanExporter(**exporter_kwargs))
+            BatchSpanProcessor(
+                OTLPSpanExporter(**_otlp_exporter_kwargs(otlp_endpoint, "traces"))
+            )
         )
         trace.set_tracer_provider(provider)
         _CONFIGURED_PROVIDER = provider
@@ -151,7 +170,7 @@ def configure_otel(
         and existing_meter_provider.__class__.__name__ == ("_ProxyMeterProvider")
     ):
         metric_reader = PeriodicExportingMetricReader(
-            OTLPMetricExporter(**exporter_kwargs)
+            OTLPMetricExporter(**_otlp_exporter_kwargs(otlp_endpoint, "metrics"))
         )
         meter_provider = MeterProvider(
             metric_readers=[metric_reader],
