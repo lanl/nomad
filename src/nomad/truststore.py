@@ -19,6 +19,24 @@ def ssl_context() -> ssl.SSLContext:
 class TruststoreHTTPAdapter(HTTPAdapter):
     """Use an OS-backed TLS context for requests and HTTPS proxies."""
 
+    def send(
+        self,
+        request,
+        stream=False,
+        timeout=None,
+        verify=True,
+        cert=None,
+        proxies=None,
+    ):
+        return super().send(
+            request,
+            stream=stream,
+            timeout=timeout,
+            verify=True,
+            cert=cert,
+            proxies=proxies,
+        )
+
     def build_connection_pool_key_attributes(self, request, verify, cert=None):
         host_params, pool_kwargs = super().build_connection_pool_key_attributes(
             request, verify, cert

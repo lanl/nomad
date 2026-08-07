@@ -64,6 +64,23 @@ def test_requests_adapter_ignores_alternate_verify_setting(monkeypatch, verify):
     assert "cert_reqs" not in pool_kwargs
 
 
+@pytest.mark.parametrize("verify", [False, "/alternate/ca.pem"])
+def test_requests_adapter_forces_verification_when_sending(monkeypatch, verify):
+    captured = {}
+
+    def fake_send(self, request, **kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(HTTPAdapter, "send", fake_send)
+    adapter = truststore.TruststoreHTTPAdapter()
+    request = requests.Request("GET", "https://example.test").prepare()
+
+    adapter.send(request, verify=verify)
+
+    assert captured["verify"] is True
+
+
 @pytest.mark.parametrize("variable", ["REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"])
 def test_requests_adapter_ignores_environment_ca_bundle(monkeypatch, variable):
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
