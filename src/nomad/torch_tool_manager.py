@@ -91,6 +91,11 @@ class DocketQueueAdmission(Dependency["DocketQueueAdmission"]):
     async def __aenter__(self) -> "DocketQueueAdmission":
         from docket.dependencies._functional import _Depends
 
+        if current_execution.get(None) is None:
+            # Direct (non-task) call: no docket worker owns this
+            # execution, and _enqueue_request applies its own
+            # backpressure with a client-facing error.
+            return self
         if not await self.manager._reserve_docket_queue_slot(self.tool_name):
             raise AdmissionBlocked(
                 current_execution.get(),

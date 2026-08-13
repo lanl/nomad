@@ -5,9 +5,29 @@ from collections.abc import Callable
 from typing import Any
 
 from docket import ConcurrencyLimit
+from docket.dependencies import current_execution
 from fastmcp import FastMCP
 from fastmcp.tools import FunctionTool
 from fastmcp.utilities.tasks import TaskConfig
+
+
+class _WorkerScopedConcurrencyLimit(ConcurrencyLimit):
+    """Docket's ConcurrencyLimit requires a worker execution context.
+
+    FastMCP resolves Dependency-typed defaults on plain tools/call too,
+    where no docket worker exists; there the limit must read as inert.
+    The manager's own queue backpressure governs the direct path.
+    """
+
+    async def __aenter__(self) -> ConcurrencyLimit:
+        if current_execution.get(None) is None:
+            return self
+        return await super().__aenter__()
+
+    async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+        if current_execution.get(None) is None:
+            return None
+        return await super().__aexit__(exc_type, exc_value, traceback)
 
 
 def _compatible_torch_module_tool_types() -> tuple[type[Any], ...]:
@@ -38,7 +58,7 @@ def build_torch_module_fastmcp_tool(
     """Build a FastMCP tool from a TorchModuleTool-like object."""
 
     concurrency = (
-        ConcurrencyLimit(max_concurrent=task_concurrency_limit)
+        _WorkerScopedConcurrencyLimit(max_concurrent=task_concurrency_limit)
         if task_concurrency_limit is not None
         else None
     )
