@@ -1135,3 +1135,82 @@ def test_tool_manager_observable_metrics(dummy_tool_factory):
     assert devices[0].value == 0
     assert devices[0].attributes["device"] == "cpu"
     assert utilization == []
+
+
+@pytest.mark.asyncio()
+async def test_direct_fastmcp_tool_call_runs_outside_worker(dummy_tool_factory):
+    # Regression for the Demo Image smoke failure: a plain tools/call
+    # resolves the task markers with no docket worker context and must
+    # not fail dependency resolution.
+    manager = TorchModelToolManager(
+        ToolManagerConfig(),
+        device_provider=lambda: [torch.device("cpu")],
+    )
+    tool = dummy_tool_factory(label="direct")
+    manager.register_tool("direct", tool, source=DummyTool.clone_sources["direct"])
+    fast_tool = manager._build_fastmcp_tool("direct", manager._tools["direct"])
+
+    result = await fast_tool.run({"value": 3})
+
+    assert result.content
+    await manager.aclose()
+
+
+@pytest.mark.asyncio()
+async def test_admission_marker_reserves_nothing_outside_worker(dummy_tool_factory):
+    # Outside a docket worker the admission marker must no-op before
+    # touching the queue; the direct path's own backpressure in
+    # _enqueue_request is the correct limiter there.
+    manager = TorchModelToolManager(
+        ToolManagerConfig(max_pending_per_tool=1),
+        device_provider=lambda: [torch.device("cpu")],
+    )
+    tool = dummy_tool_factory(label="adm")
+    manager.register_tool("adm", tool, source=DummyTool.clone_sources["adm"])
+    fast_tool = manager._build_fastmcp_tool("adm", manager._tools["adm"])
+    admission = inspect.signature(fast_tool.fn).parameters["_task_admission"].default
+
+    entered = await admission.__aenter__()
+
+    assert entered is admission
+    assert manager._docket_queue_reservations.get("adm", 0) == 0
+    await manager.aclose()
+
+
+@pytest.mark.asyncio()
+async def test_concurrency_marker_delegates_only_inside_worker(
+    dummy_tool_factory, monkeypatch
+):
+    # The concurrency marker must leave direct calls alone and delegate
+    # to docket's real enforcement when a worker context is present.
+    from docket.dependencies import current_execution
+
+    manager = TorchModelToolManager(
+        ToolManagerConfig(),
+        device_provider=lambda: [torch.device("cpu")],
+    )
+    tool = dummy_tool_factory(label="conc")
+    manager.register_tool("conc", tool, source=DummyTool.clone_sources["conc"])
+    fast_tool = manager._build_fastmcp_tool("conc", manager._tools["conc"])
+    marker = inspect.signature(fast_tool.fn).parameters["_task_concurrency"].default
+
+    delegated = []
+
+    async def fake_base_enter(self):
+        delegated.append("concurrency")
+        return self
+
+    monkeypatch.setattr(ConcurrencyLimit, "__aenter__", fake_base_enter)
+
+    entered = await marker.__aenter__()
+    assert entered is marker
+    assert delegated == []
+
+    token = current_execution.set(object())
+    try:
+        await marker.__aenter__()
+    finally:
+        current_execution.reset(token)
+
+    assert delegated == ["concurrency"]
+    await manager.aclose()
