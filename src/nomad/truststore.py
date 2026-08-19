@@ -1,21 +1,71 @@
 from __future__ import annotations
 
-_BOOTSTRAPPED = False
+import ssl
+
+from requests.adapters import HTTPAdapter
+
+_CONFIGURED = False
 HUGGINGFACE_HTTP_RETRIES = 10
 HUGGINGFACE_HTTP_BACKOFF_FACTOR = 0.1
 
 
-def bootstrap_truststore() -> None:
-    """Install system trust roots and configure HTTP clients once per process."""
-    global _BOOTSTRAPPED
-    if _BOOTSTRAPPED:
-        return
-
+def ssl_context() -> ssl.SSLContext:
+    """Return a client context backed by the operating system trust store."""
     import truststore
 
-    truststore.inject_into_ssl()
+    return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+
+class TruststoreHTTPAdapter(HTTPAdapter):
+    """Use an OS-backed TLS context for requests and HTTPS proxies."""
+
+    def send(
+        self,
+        request,
+        stream=False,
+        timeout=None,
+        verify=True,
+        cert=None,
+        proxies=None,
+    ):
+        return super().send(
+            request,
+            stream=stream,
+            timeout=timeout,
+            verify=True,
+            cert=cert,
+            proxies=proxies,
+        )
+
+    def proxy_manager_for(self, proxy, **proxy_kwargs):
+        proxy_kwargs.pop("proxy_ssl_context", None)
+        return super().proxy_manager_for(
+            proxy,
+            proxy_ssl_context=ssl_context(),
+            **proxy_kwargs,
+        )
+
+    def build_connection_pool_key_attributes(self, request, verify, cert=None):
+        host_params, pool_kwargs = super().build_connection_pool_key_attributes(
+            request, verify, cert
+        )
+        # Requests resolves REQUESTS_CA_BUNDLE/CURL_CA_BUNDLE into ``verify``
+        # before the adapter sees the request. Discard every CA-file setting so
+        # this adapter always has one trust source: the operating-system store.
+        for key in ("ca_certs", "ca_cert_dir", "cert_reqs"):
+            pool_kwargs.pop(key, None)
+        pool_kwargs["ssl_context"] = ssl_context()
+        return host_params, pool_kwargs
+
+
+def configure_network_clients() -> None:
+    """Configure supported network clients with explicit truststore contexts."""
+    global _CONFIGURED
+    if _CONFIGURED:
+        return
+
     configure_huggingface_http()
-    _BOOTSTRAPPED = True
+    _CONFIGURED = True
 
 
 def configure_huggingface_http() -> None:
@@ -27,6 +77,10 @@ def configure_huggingface_http() -> None:
 
     if hasattr(huggingface_hub, "set_client_factory"):
         huggingface_hub.set_client_factory(_huggingface_httpx_client_factory)
+        if hasattr(huggingface_hub, "set_async_client_factory"):
+            huggingface_hub.set_async_client_factory(
+                _huggingface_async_httpx_client_factory
+            )
     elif hasattr(huggingface_hub, "configure_http_backend"):
         huggingface_hub.configure_http_backend(_huggingface_requests_session_factory)
 
@@ -49,13 +103,42 @@ def _huggingface_httpx_client_factory():
         else httpx.HTTPTransport(
             proxy=proxy,
             retries=HUGGINGFACE_HTTP_RETRIES,
+            verify=ssl_context(),
         )
         for pattern, proxy in get_environment_proxies().items()
     }
 
     return httpx.Client(
-        transport=httpx.HTTPTransport(retries=HUGGINGFACE_HTTP_RETRIES),
+        transport=httpx.HTTPTransport(
+            retries=HUGGINGFACE_HTTP_RETRIES,
+            verify=ssl_context(),
+        ),
         mounts=mounts,
+        follow_redirects=True,
+        timeout=None,
+        event_hooks=event_hooks,
+    )
+
+
+def _huggingface_async_httpx_client_factory():
+    import httpx
+
+    event_hooks = {}
+    try:
+        from huggingface_hub.utils._http import (
+            async_hf_request_event_hook,
+            async_hf_response_event_hook,
+        )
+    except ImportError:
+        pass
+    else:
+        event_hooks = {
+            "request": [async_hf_request_event_hook],
+            "response": [async_hf_response_event_hook],
+        }
+
+    return httpx.AsyncClient(
+        verify=ssl_context(),
         follow_redirects=True,
         timeout=None,
         event_hooks=event_hooks,
@@ -64,7 +147,6 @@ def _huggingface_httpx_client_factory():
 
 def _huggingface_requests_session_factory():
     import requests
-    from requests.adapters import HTTPAdapter
     from urllib3.util.retry import Retry
 
     retry = Retry(
@@ -80,12 +162,18 @@ def _huggingface_requests_session_factory():
         from huggingface_hub import constants
         from huggingface_hub.utils._http import OfflineAdapter, UniqueRequestIdAdapter
     except ImportError:
-        adapter: HTTPAdapter = HTTPAdapter(max_retries=retry)
+        adapter: HTTPAdapter = TruststoreHTTPAdapter(max_retries=retry)
     else:
         if constants.HF_HUB_OFFLINE:
             adapter = OfflineAdapter()
         else:
-            adapter = UniqueRequestIdAdapter(max_retries=retry)
+
+            class TruststoreUniqueRequestIdAdapter(
+                UniqueRequestIdAdapter, TruststoreHTTPAdapter
+            ):
+                pass
+
+            adapter = TruststoreUniqueRequestIdAdapter(max_retries=retry)
 
     session = requests.Session()
     session.mount("http://", adapter)

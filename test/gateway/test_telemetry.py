@@ -142,7 +142,7 @@ def test_gateway_config_accepts_telemetry_section(tmp_path):
                 "telemetry:",
                 "  enabled: true",
                 "  service_name: test-nomad",
-                "  otlp_endpoint: http://collector:4317",
+                "  otlp_endpoint: http://collector:4318",
             ]
         ),
         encoding="utf-8",
@@ -152,7 +152,7 @@ def test_gateway_config_accepts_telemetry_section(tmp_path):
 
     assert config.telemetry.enabled is True
     assert config.telemetry.service_name == "test-nomad"
-    assert config.telemetry.otlp_endpoint == "http://collector:4317"
+    assert config.telemetry.otlp_endpoint == "http://collector:4318"
 
 
 def test_otel_env_false_does_not_request_exporter(monkeypatch):

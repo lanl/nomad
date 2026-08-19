@@ -4,9 +4,11 @@ import logging
 from typing import Any
 
 from fastmcp import Client
+from fastmcp.client.transports import SSETransport, StreamableHttpTransport
 from mcp.types import CallToolResult, Tool
 
 from ..common.upstream_errors import UpstreamConnectionError
+from ..truststore import ssl_context
 from .config import ServerParameters
 
 logger = logging.getLogger(__name__)
@@ -47,7 +49,13 @@ class UpstreamProxy:
         if server not in self._servers:
             raise KeyError(f"Unknown upstream server '{server}'")
 
-        client = Client(params.to_transport(), name=server)
+        transport = params.to_transport()
+        verify = (
+            ssl_context()
+            if isinstance(transport, StreamableHttpTransport | SSETransport)
+            else None
+        )
+        client = Client(transport, name=server, verify=verify)
         try:
             await client.__aenter__()
         except Exception as exc:

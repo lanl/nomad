@@ -19,6 +19,7 @@ dependencies = [
     "huggingface_hub>=0.34.0,<2.0",
     "oras>=0.2.42,<1.0",
     "thefuzz[speedup]>=0.22.1",
+    "requests>=2.32.2",
 ]
 
 [project.optional-dependencies]
@@ -27,8 +28,8 @@ otel = [
     "opentelemetry-api>=1.40.0",
     # SDK providers and processors/readers that collect telemetry in-process.
     "opentelemetry-sdk>=1.40.0",
-    # OTLP/gRPC exporters for sending traces and metrics to a collector.
-    "opentelemetry-exporter-otlp-proto-grpc>=1.40.0",
+    # OTLP/HTTP exporters for sending traces and metrics to a collector.
+    "opentelemetry-exporter-otlp-proto-http>=1.40.0",
 ]
 
 [project.urls]

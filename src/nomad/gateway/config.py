@@ -185,7 +185,7 @@ class TelemetryConfig(BaseModel):
     """OpenTelemetry service.name for gateway spans."""
 
     otlp_endpoint: str | None = None
-    """Optional OTLP/gRPC endpoint. Environment variables are used when unset."""
+    """Optional OTLP/HTTP endpoint. Environment variables are used when unset."""
 
 
 MiddlewareEntry = (

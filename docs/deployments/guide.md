@@ -78,16 +78,16 @@ container can reach:
 ```shell
 docker run --rm \
    --add-host=host.docker.internal:host-gateway \
-   --env OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4317 \
+   --env OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4318 \
    --publish 38217:38217 \
    nomad-demo:latest
 ```
 
-The collector must listen for OTLP/gRPC traffic on a host interface reachable
+The collector must listen for OTLP/HTTP traffic on a host interface reachable
 from the container. Nomad initiates the connection to the collector, so the
-Nomad container does not publish port `4317`. When the collector runs in the
+Nomad container does not publish port `4318`. When the collector runs in the
 same container network, use its service name instead, for example
-`http://otel-collector:4317`. Setting `OTEL_EXPORTER_OTLP_ENDPOINT` also enables
+`http://otel-collector:4318`. Setting `OTEL_EXPORTER_OTLP_ENDPOINT` also enables
 telemetry export. See {doc}`OpenTelemetry </reference/otel>` for other ways to
 enable export and configure the service name.
 

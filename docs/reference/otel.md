@@ -2,7 +2,7 @@
 
 Nomad emits OpenTelemetry metrics and spans for model serving and the code-mode
 gateway when telemetry export is enabled. Install the optional dependency extra
-to include the OTel SDK and OTLP/gRPC exporter:
+to include the OTel SDK and OTLP/HTTP exporter:
 
 ```bash
 pip install "nomad-scifm[otel]"
@@ -13,7 +13,7 @@ its container image already include this extra.
 
 ## Enabling export
 
-Nomad configures OTLP/gRPC trace and metric exporters when any of these are set:
+Nomad configures OTLP/HTTP trace and metric exporters when any of these are set:
 
 - `telemetry.enabled: true` in {py:class}`nomad.config.ServerConfig` or
   {py:class}`nomad.gateway.config.GatewayConfig`.

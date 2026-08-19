@@ -1,8 +1,10 @@
 import base64
 import json
 import os
+import subprocess
 import sys
 import types
+from contextlib import nullcontext
 from hashlib import blake2b
 from pathlib import Path
 from types import SimpleNamespace
@@ -507,6 +509,109 @@ def test_run_merges_extra_environment(monkeypatch):
     hub.run(["env"], env={"NOMAD_TEST_ENV": "ready"})
 
 
+def test_run_removes_certificate_overrides_from_git_environment(monkeypatch):
+    certificate_variables = {
+        "CURL_CA_BUNDLE",
+        "GIT_SSL_CAINFO",
+        "GIT_SSL_CAPATH",
+        "GIT_SSL_NO_VERIFY",
+        "GIT_PROXY_SSL_CAINFO",
+        "REQUESTS_CA_BUNDLE",
+        "SSL_CERT_DIR",
+        "SSL_CERT_FILE",
+    }
+    for name in certificate_variables:
+        monkeypatch.setenv(name, "/alternate/certificates")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "http.sslVerify")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "false")
+    monkeypatch.setenv("GIT_CONFIG_PARAMETERS", "'http.sslVerify'='false'")
+
+    def fake_run(cmd, cwd=None, text=False, env=None, **kwargs):
+        assert cmd == ["git", "ls-remote", "https://example.test/repo.git"]
+        assert env is not None
+        assert certificate_variables.isdisjoint(env)
+        assert "GIT_CONFIG_COUNT" not in env
+        assert "GIT_CONFIG_KEY_0" not in env
+        assert "GIT_CONFIG_VALUE_0" not in env
+        assert "GIT_CONFIG_PARAMETERS" not in env
+        assert env["GIT_LFS_SKIP_SMUDGE"] == "1"
+        return SimpleNamespace(returncode=0, stdout="")
+
+    monkeypatch.setattr(hub.subprocess, "run", fake_run)
+
+    hub.run(
+        ["git", "ls-remote", "https://example.test/repo.git"],
+        env={
+            "GIT_LFS_SKIP_SMUDGE": "1",
+            "GIT_SSL_CAINFO": "/explicit/alternate.pem",
+        },
+    )
+
+
+def test_sanitized_git_environment_preserves_safe_config_and_drops_tls(
+    monkeypatch, tmp_path
+):
+    config = tmp_path / "gitconfig"
+    for key, value in {
+        "credential.helper": "example-helper",
+        "http.proxy": "http://proxy.example:8080",
+        "http.sslVerify": "false",
+        "http.sslCAInfo": "/alternate/ca.pem",
+        "http.proxySSLCAInfo": "/alternate/proxy-ca.pem",
+    }.items():
+        subprocess.run(["git", "config", "--file", str(config), key, value], check=True)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+
+    with hub._sanitized_git_environment(cwd=None) as env:
+        output = subprocess.run(
+            ["git", "config", "--file", env["GIT_CONFIG_SYSTEM"], "--list"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.lower()
+
+    assert "credential.helper=example-helper" in output
+    assert "http.proxy=http://proxy.example:8080" in output
+    assert "sslverify" not in output
+    assert "sslcainfo" not in output
+
+
+@pytest.mark.parametrize(
+    ("args", "url"),
+    [
+        (["ls-remote", "https://example.test/repo.git"], "https://example.test"),
+        (["lfs", "pull"], "ssh://git@example.test/repo.git"),
+    ],
+)
+def test_run_git_network_applies_sanitized_environment(
+    monkeypatch, tmp_path, args, url
+):
+    expected_env = {"GIT_CONFIG_SYSTEM": "/sanitized/config"}
+    calls = []
+
+    def sanitized_environment(*, cwd):
+        assert cwd == tmp_path
+        return nullcontext(expected_env)
+
+    monkeypatch.setattr(
+        hub,
+        "_sanitized_git_environment",
+        sanitized_environment,
+    )
+    monkeypatch.setattr(
+        hub,
+        "run",
+        lambda cmd, **kwargs: calls.append((cmd, kwargs)) or "",
+    )
+
+    hub.run_git_network(args, url=url, cwd=tmp_path, capture=True)
+
+    assert calls == [
+        (["git", *args], {"cwd": tmp_path, "capture": True, "env": expected_env})
+    ]
+
+
 def test_run_raises_when_command_missing(monkeypatch, caplog):
     def fake_run(*args, **kwargs):
         raise FileNotFoundError
@@ -847,22 +952,25 @@ def test_repospec_repo_key_matches_git_https_and_ssh_variants():
 
 
 def test_repospec_git_cache_digest_uses_ls_remote(monkeypatch):
-    calls: list[tuple[list[str], Path | None, bool]] = []
+    calls = []
 
-    def fake_run(cmd, cwd=None, capture=False):
-        calls.append((cmd, cwd, capture))
+    def fake_run_git_network(args, **kwargs):
+        calls.append((args, kwargs))
         return "abcdef1234567890\trefs/heads/main"
 
-    monkeypatch.setattr(hub, "run", fake_run)
+    monkeypatch.setattr(hub, "run_git_network", fake_run_git_network)
 
     spec = hub.RepoSpec.parse("git+https://example.com/repo.git@main")
     assert isinstance(spec, hub.GitRepoSpec)
     commit = spec.cache_digest()
 
     assert commit == "abcdef1234567890"
-    assert calls == [
-        (["git", "ls-remote", "https://example.com/repo.git", "main"], None, True)
-    ]
+    assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert args == ["ls-remote", "https://example.com/repo.git", "main"]
+    assert kwargs["url"] == "https://example.com/repo.git"
+    assert kwargs["capture"] is True
+    assert kwargs["cwd"].name.startswith("nomad-git-ls-remote-")
 
 
 def test_repospec_git_cache_digest_keeps_pinned_commit(monkeypatch):
@@ -942,6 +1050,7 @@ def test_pull_git_clones_when_missing(monkeypatch, tmp_path):
     repo_key = spec.repo_key()
     cache_dir_tmp = cache_root / "git+https" / repo_key / f"tmp--{commit}"
     calls: list[tuple[list[str], Path | None, bool, dict[str, str] | None]] = []
+    network_calls = []
 
     def fake_run(cmd, cwd=None, capture=False, env=None):
         calls.append((cmd, cwd, capture, env))
@@ -949,7 +1058,12 @@ def test_pull_git_clones_when_missing(monkeypatch, tmp_path):
             cache_dir_tmp.mkdir(parents=True, exist_ok=True)
         return ""
 
+    def fake_run_git_network(args, **kwargs):
+        network_calls.append((args, kwargs))
+        return ""
+
     monkeypatch.setattr(hub, "run", fake_run)
+    monkeypatch.setattr(hub, "run_git_network", fake_run_git_network)
 
     cache_dir = spec.pull()
     expected_dir = cache_root / "git+https" / repo_key / commit
@@ -966,18 +1080,21 @@ def test_pull_git_clones_when_missing(monkeypatch, tmp_path):
             None,
         ),
         (
-            ["git", "fetch", "--depth", "1", "origin", commit],
-            cache_dir_tmp,
-            False,
-            None,
-        ),
-        (
             ["git", "checkout", commit],
             cache_dir_tmp,
             False,
             {"GIT_LFS_SKIP_SMUDGE": "1"},
         ),
-        (["git", "lfs", "pull"], cache_dir_tmp, False, None),
+    ]
+    assert network_calls == [
+        (
+            ["fetch", "--depth", "1", "https://example.com/repo.git", commit],
+            {"url": "https://example.com/repo.git", "cwd": cache_dir_tmp},
+        ),
+        (
+            ["lfs", "pull"],
+            {"url": "https://example.com/repo.git", "cwd": cache_dir_tmp},
+        ),
     ]
 
 

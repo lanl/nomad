@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from .truststore import bootstrap_truststore
+from .truststore import configure_network_clients
 
 
 def main() -> None:
-    bootstrap_truststore()
+    configure_network_clients()
 
     from .cli import app
 
