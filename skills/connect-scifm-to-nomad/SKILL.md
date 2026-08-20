@@ -25,6 +25,25 @@ Read the relevant published docs before making implementation decisions:
 If available, `https://lanl.github.io/nomad/llms.txt` is useful for retrieval,
 but prefer the HTML docs or source links when details differ.
 
+## Updating This Skill
+
+When the user asks to update this skill, use
+`https://github.com/lanl/nomad/tree/main/skills/connect-scifm-to-nomad` as the
+canonical source:
+
+- Locate the installed skill directory and inspect it for local modifications
+  before changing files. Preserve those changes or ask the user before
+  overwriting them.
+- Update the complete skill bundle, including `SKILL.md` and `references/`, so
+  its instructions and supporting material remain in sync.
+- Resolve symlinked resources when installing outside a full Nomad checkout.
+  In particular, ensure `references/model-card-template.md` remains usable in
+  the standalone copy.
+- Validate the updated directory as a skill, check that referenced resources
+  and links resolve, and reread the updated `SKILL.md` before continuing work.
+- Tell the user which source revision was installed and summarize any preserved
+local differences.
+
 ## Workflow
 
 1. Build context with the user.
@@ -65,8 +84,12 @@ but prefer the HTML docs or source links when details differ.
 6. Validate collaboratively.
    - Read `references/testing-guide.md` for the testing and GPU-marker workflow.
    - First run agent-side checks: package import, schema tests, preprocessing/postprocessing tests, real-model integration tests when available, and Nomad server execution using the surfaces recommended by the Model Builder guide.
+   - Ask what the user wants to learn from validation, not only whether a tool call succeeds. Treat server startup and a successful call as preliminary checks rather than completed scientific validation.
+   - Do not ask the user to construct serialized tensor payloads by hand. Create a reusable FastMCP client or code-mode script that constructs typed inputs and reconstructs typed outputs.
+   - Offer to connect to the Nomad MCP server through Nomad's code-mode gateway when programmatic exploration would help. During interactive work, prefer `execute_mcp_script` so the user can review and reuse the code.
    - Then create user-review artifacts. For PDEs and fields, show input frames, predicted frames, deltas, and scalar summaries. For sequence or molecular models, report representative predictions, scores, validity checks, and units.
    - Ask the user to confirm the outputs are scientifically plausible. Treat unexpected predictions as possible interface, preprocessing, unit, or normalization bugs until checked.
+   - Propose the next useful experiment, such as a parameter sweep, comparison, spatial plot, larger batch, or edge-case check, and offer to create and run it.
 
 ## Getting Help
 

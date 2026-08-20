@@ -42,7 +42,7 @@ def _yaml_blocks(path: Path) -> Iterator[tuple[dict, int]]:
 
 
 def _validate_classified_yaml_blocks(path: Path) -> dict[str, int]:
-    counts = {"server": 0, "gateway": 0}
+    counts = {"server": 0, "gateway": 0, "external": 0}
 
     for data, start_line in _yaml_blocks(path):
         if {"fmod_models", "tools", "tool_manager", "search_tool"} & data.keys():
@@ -53,6 +53,10 @@ def _validate_classified_yaml_blocks(path: Path) -> dict[str, int]:
         if {"servers", "defaults", "middleware"} & data.keys():
             GatewayConfig.model_validate(data)
             counts["gateway"] += 1
+            continue
+
+        if "mcp_servers" in data:
+            counts["external"] += 1
             continue
 
         raise AssertionError(
@@ -79,12 +83,12 @@ def test_getting_started_gateway_yaml_examples_are_valid() -> None:
 
 def test_reference_config_yaml_examples_are_valid() -> None:
     counts = _validate_classified_yaml_blocks(Path("docs/reference/config.md"))
-    assert counts == {"server": 1, "gateway": 2}
+    assert counts == {"server": 1, "gateway": 2, "external": 0}
 
 
 def test_model_builder_yaml_examples_are_valid() -> None:
     counts = _validate_classified_yaml_blocks(Path("docs/guides/model-builder.md"))
-    assert counts == {"server": 1, "gateway": 1}
+    assert counts == {"server": 1, "gateway": 1, "external": 1}
 
 
 def test_metric_docs_table_is_generated_from_definitions() -> None:

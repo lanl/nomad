@@ -51,6 +51,14 @@ def _check_float_and_min_rank(min_rank: int):
     return _check
 
 
+#: Pydantic annotation for an unconstrained :class:`torch.Tensor`.
+#:
+#: Validation preserves an existing tensor, decodes Nomad's base64-encoded tensor
+#: representation, or converts other array-like input with :func:`torch.as_tensor`.
+#: Serialization produces a base64 zstd-compressed torch serialization and advertises
+#: the ``application/vnd.nomad.tensor`` media type in the generated JSON schema.
+#: ``Tensor`` does not constrain dtype, rank, or shape; use :func:`TensorField` or
+#: additional Pydantic validators when the tool interface requires those constraints.
 Tensor = Annotated[
     torch.Tensor,
     BeforeValidator(_to_tensor),
@@ -60,7 +68,12 @@ Tensor = Annotated[
 
 
 def TensorField(*, min_rank: int, shape_str: str):
-    """Return a Pydantic annotation for a floating tensor with minimum rank."""
+    """Return a Pydantic annotation for a floating-point tensor with minimum rank.
+
+    :param min_rank: Minimum number of dimensions accepted by the runtime validator.
+    :param shape_str: Human-readable description of the dimensions, included in the
+        generated JSON schema.
+    """
     schema = {
         **BASE_TENSOR_SCHEMA,
         "description": f'Floating torch.Tensor with shape "{shape_str}" '
@@ -76,8 +89,21 @@ def TensorField(*, min_rank: int, shape_str: str):
     ]
 
 
+#: Pydantic annotation for a floating-point, rank-0 field with shape ``T ...``.
+#: ``T`` is the time axis and ``...`` represents zero or more spatial axes. The
+#: validator requires at least one dimension but does not assign meaning to axes.
 T0_Tensor = TensorField(min_rank=1, shape_str="T ...")
+
+#: Pydantic annotation for a floating-point, rank-1 field with shape ``T ... i``.
+#: ``T`` is the time axis, ``...`` represents zero or more spatial axes, and ``i``
+#: is the component axis. The validator requires at least two dimensions but does
+#: not assign meaning to axes.
 T1_Tensor = TensorField(min_rank=2, shape_str="T ... i")
+
+#: Pydantic annotation for a floating-point, rank-2 field with shape ``T ... i j``.
+#: ``T`` is the time axis, ``...`` represents zero or more spatial axes, and ``i``
+#: and ``j`` are the two component axes. The validator requires at least three
+#: dimensions but does not assign meaning to axes.
 T2_Tensor = TensorField(min_rank=3, shape_str="T ... i j")
 
 
