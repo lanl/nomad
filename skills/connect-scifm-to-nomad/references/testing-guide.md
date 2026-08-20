@@ -94,6 +94,17 @@ match how the SciFM should be invoked. If they disagree, treat that feedback as
 part of validation and revise the adapter, preprocessing, output schema, or
 model card.
 
+Start with a small representative example, then offer a concrete follow-up that
+matches the user's scientific goal. Create and run the supporting client or
+code-mode script rather than leaving the user to assemble serialized payloads.
+For repeated calls, aggregation, plotting, or tool composition, offer to connect
+through [Nomad's code-mode gateway](https://lanl.github.io/nomad/guides/getting-started.html#code-mode-gateway).
+Prefer `execute_mcp_script` during that interaction so the user can inspect and
+reuse the code; this preference does not prohibit direct tool calls,
+`execute_mcp_code`, `code-mode-exec`, or a
+[FastMCP client](https://gofastmcp.com/clients/client) when one of those is more
+appropriate.
+
 ## GPU And Scheduler Guidance
 
 On shared clusters, do not run real inference or GPU tests on login/head nodes.
@@ -141,8 +152,12 @@ CUDA, report that state clearly rather than treating validation as complete.
 After pytest passes, validate the Nomad-facing path:
 
 - Import the adapter from the same environment that will run Nomad.
-- Start `nomad serve` with the intended `nomad.yml` or use
-  `nomad code-mode-exec` for tensor-heavy and `WellFormat` payloads.
+- Start `nomad serve` with the intended `nomad.yml`.
+- Follow the [Model Builder guide](https://lanl.github.io/nomad/guides/model-builder.html)
+  when selecting MCP Inspector, a
+  [FastMCP client](https://gofastmcp.com/clients/client), or
+  [Nomad's code-mode gateway](https://lanl.github.io/nomad/guides/getting-started.html#code-mode-gateway).
+  Do not ask the user to enter serialized tensor payloads manually.
 - Call the tool with a representative input and compare the response schema to
   the model card.
 - Confirm the output is JSON-friendly or WellFormat/Tensor-compatible as

@@ -18,8 +18,14 @@ guides your preferred agent through connecting a SciFM to Nomad:
    [Claude Code][claude-code],
    [URSA][ursa], or your coding agent of choice.
 2. Start the agent from your model's code folder.
-3. Ask the agent to install the skill using the
-   [install prompt](../deployments/agent-skills.md#connect-scifm-to-nomad).
+3. Ask the agent to install the skill with this prompt:
+
+   ```text
+   Download the skill from
+   https://github.com/lanl/nomad/tree/main/skills/connect-scifm-to-nomad,
+   resolve any symlinked references, and set it up in my skills directory. Then
+   show me how to use the skill.
+   ```
 4. Ask the agent to connect your model.
 
 These recordings show [Codex][codex] and [URSA][ursa] connecting
@@ -63,8 +69,9 @@ and finishing with validated MCP tools.
 Nomad serves tools from configuration rather than from an ad hoc Python entry
 point. In practice, connecting a SciFM means supplying four pieces:
 
-- Importable Python code for the tool class/function in a [pip-installable](https://packaging.python.org/en/latest/overview/) package.
-- A reachable model directory for the weights and configuration (`name_or_path`),
+- Importable Python code for the tool class or function in a
+  [pip-installable](https://packaging.python.org/en/latest/overview/) package.
+- A reachable model directory for the weights and configuration (`name_or_path`).
 - A model card based on {repo_file}`container/model-card.md <container/model-card.md>`.
 - A config entry (`fmod_models` or `tools`) in {repo_file}`nomad.yml <container/demo/nomad.yml>`.
 
@@ -164,7 +171,7 @@ from nomad.fm_base_tool import TorchModuleTool
 # # For PDE Models
 # from nomad.well_format import AutoRegressiveInput, WellFormat
 
-# # For SciFM's needing tensor input/outputs
+# # For SciFMs that need tensor inputs or outputs
 # from nomad.well_format import Tensor
 
 
@@ -241,7 +248,7 @@ class MyModelTool(
 > than loading the model in
 > {py:meth}`TorchModuleTool.from_pretrained <nomad.fm_base_tool.TorchModuleTool.from_pretrained>`.
 
-## Choose `fmod_models` vs `tools`
+## Choosing `fmod_models` vs `tools`
 
 - Use `fmod_models` when your class is a
   {py:class}`nomad.fm_base_tool.TorchModuleTool`.
@@ -260,10 +267,58 @@ fmod_models:
 Add entries under `tools` only when you also want regular Python callables
 registered alongside the model.
 
+## Deciding on Input and Output Schemas
+
+The input and output schemas of your
+{py:class}`~nomad.fm_base_tool.TorchModuleTool` define how agents interact with
+your model. Designing this interface is key; the rest of the
+{py:class}`~nomad.fm_base_tool.TorchModuleTool` implementation is plumbing.
+Keep these guidelines in mind:
+
+1. Prefer inputs that map directly to a single model invocation.
+2. Consider multiple tools instead of one more complex tool. Nomad handles
+   de-duplicating model weights, so the runtime penalty for more tools is
+   minimal.
+3. Prefer built-in formats where possible, but build an interface that works
+   for your model first.
+
+| Model Interface | Suggested Schema |
+|:---:|:---|
+| Single fixed-shape array | {py:func}`nomad.well_format.TensorField` with a {py:class}`pydantic.AfterValidator` |
+| Arbitrary tensor | {py:data}`nomad.well_format.Tensor` |
+| Coordinates, BCs and named physical fields | {py:class}`~nomad.well_format.WellFormat` |
+| Stateful evolution or rollout | {py:class}`~nomad.well_format.WellFormat` and {py:class}`~nomad.well_format.AutoRegressiveInput` |
+| Small scalar or list data | Ordinary JSON-friendly {py:class}`pydantic.BaseModel` fields |
+
+### Enforcing Exact Tensor Shapes
+
+To enforce an exact shape, add a {py:class}`~pydantic.AfterValidator`:
+
+```python
+from typing import Annotated
+
+import torch
+from pydantic import AfterValidator
+
+from nomad.well_format import TensorField
+
+
+def require_image_shape(value: torch.Tensor) -> torch.Tensor:
+    if value.shape != (3, 224, 224):
+        raise ValueError("Expected shape (3, 224, 224)")
+    return value
+
+
+ImageTensor = Annotated[
+    TensorField(min_rank=3, shape_str="channels height width"),
+    AfterValidator(require_image_shape),
+]
+```
+
 ## Hosting Your Model Weights
 
 The weights and configuration for your model must be stored in a
-[HuggingFace-style model directory](https://huggingface.co/docs/hub/models).
+[Hugging Face-style model directory](https://huggingface.co/docs/hub/models).
 Prefer hosting that directory as an external model source. The path to this
 directory is passed to
 {py:meth}`TorchModuleTool.from_pretrained <nomad.fm_base_tool.TorchModuleTool.from_pretrained>`
@@ -280,7 +335,7 @@ Recommended `name_or_path` values:
 
 | Source | Example |
 | --- | --- |
-| [HuggingFace](https://huggingface.co/docs/hub/models) | `hf://my-org/my-model-v2` |
+| [Hugging Face](https://huggingface.co/docs/hub/models) | `hf://my-org/my-model-v2` |
 | [ORAS artifact](https://oras.land/docs/) | `oras://registry.example.org/my-org/my-model:v1#models/my-model-v1` |
 | [Git/Git LFS](https://git-lfs.com/) | `git+ssh://git@example.org/my-org/models.git@main#models/my-model-v1` |
 
@@ -292,10 +347,10 @@ that satisfies [SEP-986][] tool naming constraints,
 use a distinct directory name for each weight revision, and include a model
 card matching the {repo_file}`template <container/model-card.md>`.
 
-### Upload Weights To HuggingFace
+### Upload Weights to Hugging Face
 
-Use HuggingFace when you want to publish the model directory as a Hub model
-repository. Follow HuggingFace's
+Use Hugging Face when you want to publish the model directory as a Hub model
+repository. Follow Hugging Face's
 [uploading models guide](https://huggingface.co/docs/hub/en/models-uploading#uploading-models)
 to create the repository and upload the files.
 
@@ -312,11 +367,11 @@ subdirectory as a fragment:
 name_or_path: hf://my-org/my-model-v2#models/my-model-v2
 ```
 
-### Push Weights To ORAS
+### Push Weights to ORAS
 
 Use [ORAS](https://oras.land/) when you want model weights in an
 OCI-compatible registry, separate from your source repository. Start with a
-[HuggingFace-style model directory](https://huggingface.co/docs/hub/models):
+[Hugging Face-style model directory](https://huggingface.co/docs/hub/models):
 
 ```text
 models/my-model-v1/
@@ -356,12 +411,12 @@ name_or_path: oras://registry.example.org/my-org/my-model@sha256:...#models/my-m
 If the registry is private, make sure the environment that runs Nomad can
 authenticate to it before startup.
 
-### Store Weights With Git LFS
+### Store Weights with Git LFS
 
 Weights hosted within your project's repository MUST be stored with
 [Git LFS](https://git-lfs.com/). Install Git LFS before continuing.
 The model directory should still match the
-[HuggingFace model repository format](https://huggingface.co/docs/hub/models).
+[Hugging Face model repository format](https://huggingface.co/docs/hub/models).
 Then, within your project's repository:
 
 ```shell
@@ -376,7 +431,7 @@ git push
 
 ## Validate
 
-Run:
+Start the nomad MCP server by running:
 
 ```bash
 nomad serve --transport http --host localhost --port 8000 path/to/nomad.yml
@@ -389,22 +444,33 @@ INFO:     Application startup complete.
 INFO:     Uvicorn running on http://localhost:8000
 ```
 
-If your tool accepts ordinary JSON-friendly inputs, connect with
-[MCP Inspector][] and run a quick tool call to verify that it behaves
-correctly.
+Choose a validation surface based on what you need to test:
 
-### Structured Tensor Inputs
+| Validation task | Useful surface |
+| --- | --- |
+| Inspect schemas or make one small JSON-friendly call | [MCP Inspector][] |
+| Construct typed inputs, deserialize tensor-bearing outputs, or keep a reusable client test | A [FastMCP client](https://gofastmcp.com/clients/client) script or Nomad's code-mode gateway |
+| Make many calls, compose tools, aggregate results, or create plots and other artifacts | A FastMCP client script or Nomad's code-mode gateway |
 
-If your {py:class}`~nomad.fm_base_tool.TorchModuleTool` accepts
+Inspector can confirm that a simple tool is reachable, but it is not always a
+useful scientific-validation workflow. For example, mapping a scalar model over
+hundreds of latitude, longitude, and depth coordinates is better handled in a
+script even though each individual request is JSON-friendly.
+
+### Programmatic Validation
+
+If your {py:class}`~nomad.fm_base_tool.TorchModuleTool` accepts or returns
 {py:class}`~nomad.well_format.WellFormat`,
 {py:class}`~nomad.well_format.AutoRegressiveInput`, or
-{py:data}`nomad.well_format.Tensor` fields, [MCP Inspector][] is usually the
-wrong testing surface. Those values are sent as compressed base64-encoded torch
-serializations, which makes hand-written Inspector payloads cumbersome and
-error-prone.
+{py:data}`nomad.well_format.Tensor` fields, use a FastMCP client or code-mode
+script to construct inputs and reconstruct outputs. Tensor values cross MCP as
+compressed base64-encoded torch serializations; do not copy those serialized
+values into Inspector by hand.
 
-In that case, test the model through [`nomad code-mode-exec`](cli-nomad-code-mode-exec)
-instead.
+Nomad's code-mode gateway is especially useful when you want to explore the
+model iteratively, make many calls, or turn results into plots. The following
+example uses [`nomad code-mode-exec`](cli-nomad-code-mode-exec) to run a
+reviewable script.
 
 Create `gateway.yml`:
 
@@ -441,6 +507,98 @@ Run the script in the code-mode sandbox:
 ```bash
 nomad code-mode-exec --config gateway.yml test_rollout.py
 ```
+
+### Connect an Agent to the Code-Mode Gateway
+
+An agent connected to the gateway can use
+{py:meth}`execute_mcp_script <nomad.gateway.server.CodeModeGateway.execute_mcp_script>`
+for the same reviewable, script-oriented workflow. Configure your agent to
+launch the gateway over stdio, replacing `/absolute/path/to/gateway.yml` with
+the absolute path to the file above.
+
+Once connected, ask the agent to:
+
+- Create a plot of my model's predictions.
+- Explore the predicted result of sweeping these parameters: ...
+- Compare the model's predictions for these inputs: ...
+
+::::{tab-set}
+:::{tab-item} Codex
+
+Add this to `~/.codex/config.toml` or a trusted project's
+`.codex/config.toml`:
+
+```toml
+[mcp_servers.nomad-code-mode]
+command = "uv"
+args = [
+  "run",
+  "nomad",
+  "code-mode",
+  "--config",
+  "/absolute/path/to/gateway.yml",
+]
+```
+
+See the [Codex MCP documentation](https://developers.openai.com/codex/mcp)
+for other configuration methods and options.
+
+Restart Codex or use `/mcp` to confirm that `nomad-code-mode` is connected.
+:::
+
+:::{tab-item} Claude Code
+
+Add this project-scoped server to `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "nomad-code-mode": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "nomad",
+        "code-mode",
+        "--config",
+        "/absolute/path/to/gateway.yml"
+      ]
+    }
+  }
+}
+```
+
+See the [Claude Code MCP documentation](https://code.claude.com/docs/en/mcp)
+for configuration scopes, approvals, and other setup methods.
+
+Start Claude Code, approve the project server when prompted, and use `/mcp`
+to confirm the connection.
+:::
+
+:::{tab-item} URSA
+:selected:
+
+Add the gateway to the `mcp_servers` section of your URSA configuration:
+
+```yaml
+mcp_servers:
+  nomad-code-mode:
+    transport: stdio
+    command: uv
+    args:
+      - run
+      - nomad
+      - code-mode
+      - --config
+      - /absolute/path/to/gateway.yml
+```
+
+See the [URSA configuration documentation](https://lanl.github.io/ursa/configuration/files-and-env/)
+for reusable configuration files and environment handling.
+
+Start URSA with `ursa --config ursa.yml`.
+:::
+::::
 
 For a fuller worked example using `WellFormat` inputs and a PDE surrogate, see
 the {doc}`Nomad Inference notebook </guides/nomad_inference>`.
