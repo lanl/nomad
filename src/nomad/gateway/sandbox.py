@@ -470,7 +470,7 @@ class SandboxExecutor:
         if not script_path.is_absolute():
             script_path = (options.workspace_root or Path.cwd()) / script_path
 
-        script_path = script_path.resolve()
+        script_path = script_path.absolute()
         if not script_path.is_file():
             raise FileNotFoundError(f"Script file not found: {script_path}")
 
