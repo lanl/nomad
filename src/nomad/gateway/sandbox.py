@@ -466,6 +466,14 @@ class SandboxExecutor:
         script_args: list[str] = (),
         capture_stdio: bool = True,
     ) -> SandboxResult:
+        script_path = Path(script_path).expanduser()
+        if not script_path.is_absolute():
+            script_path = (options.workspace_root or Path.cwd()) / script_path
+
+        script_path = script_path.resolve()
+        if not script_path.is_file():
+            raise FileNotFoundError(f"Script file not found: {script_path}")
+
         return await self._run_script_path(
             script_path=script_path,
             options=options,
