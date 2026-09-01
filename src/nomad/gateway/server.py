@@ -421,6 +421,13 @@ def run_gateway(
     **kwargs: Any,
 ) -> None:
     """Run a code-mode gateway from an already-loaded config."""
+    effective_transport = transport or "stdio"
+    if (
+        effective_transport == "stdio"
+        and "workspace_root" not in config.defaults.model_fields_set
+    ):
+        config.defaults.workspace_root = Path.cwd().resolve()
+
     configure_otel(
         service_name=config.telemetry.service_name,
         service_version=_PACKAGE_VERSION,

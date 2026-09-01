@@ -11,10 +11,69 @@ from typer.testing import CliRunner
 
 from nomad.common.config_errors import ConfigError
 from nomad.common.upstream_errors import UpstreamConnectionError
-from nomad.gateway import cli
-from nomad.gateway.config import GatewayConfig
+from nomad.gateway import cli, server
+from nomad.gateway.config import GatewayConfig, GatewayDefaults
 
 runner = CliRunner()
+
+
+class _FakeCodeModeGateway:
+    created_with: GatewayConfig | None = None
+
+    def __init__(self, config: GatewayConfig):
+        type(self).created_with = config
+
+    async def serve(self, transport=None, **kwargs):
+        return None
+
+
+@pytest.mark.parametrize("transport", [None, "stdio"])
+def test_stdio_defaults_workspace_to_cwd(
+    monkeypatch,
+    tmp_path: Path,
+    transport: str | None,
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(server, "CodeModeGateway", _FakeCodeModeGateway)
+    config = GatewayConfig(servers={})
+
+    server.run_gateway(config, transport=transport)
+
+    created = _FakeCodeModeGateway.created_with
+    assert created is not None
+    assert created.defaults.workspace_root == tmp_path.resolve()
+
+
+def test_stdio_preserves_configured_workspace(monkeypatch, tmp_path: Path):
+    launch_dir = tmp_path / "launch"
+    launch_dir.mkdir()
+    configured_workspace = tmp_path / "configured"
+    monkeypatch.chdir(launch_dir)
+    monkeypatch.setattr(server, "CodeModeGateway", _FakeCodeModeGateway)
+    config = GatewayConfig(
+        servers={},
+        defaults=GatewayDefaults(workspace_root=configured_workspace),
+    )
+
+    server.run_gateway(config, transport="stdio")
+
+    created = _FakeCodeModeGateway.created_with
+    assert created is not None
+    assert created.defaults.workspace_root == configured_workspace
+
+
+def test_http_keeps_temporary_workspace_default(monkeypatch, tmp_path: Path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(server, "CodeModeGateway", _FakeCodeModeGateway)
+    config = GatewayConfig(servers={})
+    temporary_workspace = config.defaults.workspace_root
+
+    server.run_gateway(config, transport="http")
+
+    created = _FakeCodeModeGateway.created_with
+    assert created is not None
+    assert created.defaults.workspace_root == temporary_workspace
+    assert created.defaults.workspace_root != tmp_path.resolve()
 
 
 @pytest.fixture

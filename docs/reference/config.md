@@ -90,7 +90,9 @@ telemetry:
 `transport` is `stdio` or `http` in gateway config files. Legacy
 `streamable-http` and `streamable_http` values are still accepted as aliases
 for `http`.
-The `workspace_root` default controls where sandboxed scripts run. If that
+The `workspace_root` default controls where sandboxed scripts run. When omitted,
+a gateway using the `stdio` transport defaults it to the gateway process's
+current working directory. Other transports use a temporary workspace. If the
 workspace contains `.venv/bin/python` or `.venv/Scripts/python.exe`, the gateway
 uses it for sandbox execution.
 

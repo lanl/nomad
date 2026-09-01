@@ -586,6 +586,81 @@ async def test_execute_script_reads_and_runs_file(
 
 
 @pytest.mark.asyncio
+async def test_run_script_resolves_relative_path_from_workspace(
+    gateway: GatewayHarness,
+):
+    workspace_root = gateway.gateway.config.defaults.workspace_root
+    assert workspace_root is not None
+    script_path = workspace_root / "relative.py"
+    script_path.write_text("RESULT = __file__\n", encoding="utf-8")
+
+    result = await gateway.gateway.run_script(Path("relative.py"))
+
+    assert Path(result.result).absolute() == script_path.absolute()
+
+
+@pytest.mark.asyncio
+async def test_run_script_expands_user_path(
+    gateway: GatewayHarness,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    script_path = tmp_path / "home_script.py"
+    script_path.write_text("RESULT = __file__\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+    result = await gateway.gateway.run_script(Path("~/home_script.py"))
+
+    assert Path(result.result).absolute() == script_path.absolute()
+
+
+@pytest.mark.asyncio
+async def test_run_script_resolves_relative_path_from_cwd_without_workspace(
+    gateway: GatewayHarness,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    script_path = tmp_path / "relative.py"
+    script_path.write_text("RESULT = __file__\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    gateway.gateway.config.defaults.workspace_root = None
+
+    result = await gateway.gateway.run_script(Path("relative.py"))
+
+    assert Path(result.result).absolute() == script_path.absolute()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_name", ["missing.py", "directory"])
+async def test_run_script_rejects_paths_that_are_not_files(
+    gateway: GatewayHarness,
+    invalid_name: str,
+):
+    workspace_root = gateway.gateway.config.defaults.workspace_root
+    assert workspace_root is not None
+    (workspace_root / "directory").mkdir(exist_ok=True)
+
+    with pytest.raises(FileNotFoundError, match="Script file not found"):
+        await gateway.gateway.run_script(Path(invalid_name))
+
+
+@pytest.mark.asyncio
+async def test_execute_script_reports_missing_file_to_client(
+    gateway: GatewayHarness,
+):
+    payload = await gateway.client.call_tool(
+        "execute_mcp_script",
+        {"script_path": "missing.py"},
+        raise_on_error=False,
+    )
+
+    assert payload.is_error
+    assert payload.content
+    assert "Script file not found" in payload.content[0].text
+
+
+@pytest.mark.asyncio
 async def test_execute_script_preserves_file_context_for_package_scripts(
     gateway: GatewayHarness, tmp_path: Path
 ):
