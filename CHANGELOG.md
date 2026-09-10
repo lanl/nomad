@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Git, and OpenTelemetry HTTPS connections, ignoring alternate CA overrides
   inherited from the environment ([#10]).
 
+## Fixed
+
+- Fixed the workspace_root to default to CWD when launched with stdio ([#13])
+- Script path is checked for existence prior to invocation ([#13])
+
 ## [v0.2.0] - 2026-07-29
 
 ### Added
