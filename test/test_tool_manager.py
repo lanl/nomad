@@ -9,8 +9,9 @@ from typing import ClassVar
 import pytest
 import torch
 from docket import ConcurrencyLimit
-from fastmcp import FastMCP
+from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp_tasks import TasksExtension
 from pydantic import BaseModel
 
 from nomad import metrics as nomad_metrics
@@ -518,6 +519,49 @@ def test_managed_fastmcp_tool_limits_docket_to_queue_headroom(dummy_tool_factory
     assert isinstance(dependency, ConcurrencyLimit)
     assert dependency.max_concurrent == 75
     assert isinstance(admission, DocketQueueAdmission)
+
+
+@pytest.mark.asyncio()
+async def test_managed_fastmcp_tool_runs_as_background_task(
+    dummy_tool_factory, monkeypatch
+):
+    manager = TorchModelToolManager(
+        ToolManagerConfig(max_pending_per_tool=4),
+        device_provider=lambda: [torch.device("cpu")],
+    )
+    tool = dummy_tool_factory(label="background-task")
+    tool_name = tool.name or "background-task"
+    manager.register_tool(
+        tool_name,
+        tool,
+        source=DummyTool.clone_sources["background-task"],
+    )
+    reserve_calls = 0
+    reserve_queue_slot = manager._reserve_docket_queue_slot
+
+    async def tracked_reserve_queue_slot(tool_name: str) -> bool:
+        nonlocal reserve_calls
+        reserve_calls += 1
+        return await reserve_queue_slot(tool_name)
+
+    monkeypatch.setattr(
+        manager,
+        "_reserve_docket_queue_slot",
+        tracked_reserve_queue_slot,
+    )
+    server = FastMCP("background-task-test")
+    server.add_extension(TasksExtension(url="memory://", concurrency=1))
+    manager.add_to_fastmcp(server)
+
+    try:
+        async with Client(server) as client:
+            result = await client.call_tool(tool_name, {"value": 41})
+    finally:
+        await manager.aclose()
+
+    assert result.structured_content == {"value": 42}
+    assert reserve_calls == 1
+    assert manager._docket_queue_reservations[tool_name] == 0
 
 
 @pytest.mark.asyncio()
