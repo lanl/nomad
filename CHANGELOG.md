@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
-- Migrated to the FastMCP v4 beta and MCP 2, with FastMCP owning MCP telemetry and Nomad retaining domain metrics and child spans ([#7])
+- Migrated to FastMCP v4 and MCP 2, with FastMCP owning MCP telemetry and Nomad retaining domain metrics and child spans ([#7])
 
 ### Changed
 
