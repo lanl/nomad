@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fixed the workspace_root to default to CWD when launched with stdio ([#13])
 - Script path is checked for existence prior to invocation ([#13])
+- Demo container now uses environment variables to configure nomad, simplifying hosting ([#16])
 
 ## [v0.2.0] - 2026-07-29
 
