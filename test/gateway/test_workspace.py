@@ -58,7 +58,6 @@ async def ephemeral_gateway(tmp_path: Path):
     config = GatewayConfig(servers=servers, defaults=defaults, middleware=[])
     async with CodeModeGateway(config) as gateway_obj:
         async with Client(gateway_obj.fastmcp) as client:
-            await client.initialize()
             yield GatewayHarness(client=client, gateway=gateway_obj)
 
 

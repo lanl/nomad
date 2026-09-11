@@ -101,6 +101,9 @@ def test_server_config_resolves_entries(monkeypatch):
             "gc_idle_seconds": 30.0,
             "disk_idle_seconds": 60.0,
             "max_pending_per_tool": 5,
+            "task_min_concurrency": 12,
+            "device_queue_depth": 3,
+            "task_backend_url": "redis://localhost:6379/2",
         },
     }
 
@@ -108,6 +111,9 @@ def test_server_config_resolves_entries(monkeypatch):
 
     assert isinstance(config.tool_manager, ToolManagerConfig)
     assert config.tool_manager.enabled is True
+    assert config.tool_manager.task_min_concurrency == 12
+    assert config.tool_manager.device_queue_depth == 3
+    assert config.tool_manager.task_backend_url == "redis://localhost:6379/2"
     assert config.search_tool.expose is False
     assert config.search_tool.weights.prefix_name == 8.0
     manager = config.tool_manager.instantiate()
@@ -138,6 +144,7 @@ def test_server_config_resolves_entries(monkeypatch):
     fm_server = DummyFastMCPServer()
     registered_model_tool = fm_config.add_to_fastmcp(fm_server)
     assert registered_model_tool.name == "dummy_tool"
+    assert registered_model_tool.task_config.mode == "optional"
     assert fm_server.tools == [registered_model_tool]
 
     assert len(config.tools) == 2
@@ -194,6 +201,32 @@ def test_tool_manager_config_rejects_negative_seconds(field: str):
         ToolManagerConfig.model_validate({"enabled": True, field: -1})
 
     assert "greater than or equal to 0" in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("task_min_concurrency", 0, "greater than or equal to 1"),
+        ("device_queue_depth", 0, "greater than or equal to 1"),
+    ],
+)
+def test_tool_manager_config_rejects_invalid_background_task_scaling(
+    field: str, value: int, message: str
+):
+    with pytest.raises(ValidationError) as exc_info:
+        ToolManagerConfig.model_validate({field: value})
+
+    assert message in str(exc_info.value)
+
+
+def test_tool_manager_config_defaults_to_finite_pending_limit():
+    assert ToolManagerConfig().max_pending_per_tool == 2**16
+    assert ToolManagerConfig().device_queue_depth == 2
+
+
+def test_tool_manager_config_rejects_unlimited_pending_requests():
+    with pytest.raises(ValidationError):
+        ToolManagerConfig.model_validate({"max_pending_per_tool": None})
 
 
 def test_torch_module_config_accepts_legacy_ursa_tool(monkeypatch):
