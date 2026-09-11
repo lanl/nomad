@@ -7,14 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## Changed
+## [v0.2.1] - 2026-09-10
+
+### Changed
 
 - Enabled [OTEL](https://opentelemetry.io/) logging within the [nomad demo image](ghcr.io/lanl/nomad). Added a docker-compose with a reference observability stack ([#9]).
 - Use the operating system trust store for Hugging Face, MCP/FastMCP, ORAS,
   Git, and OpenTelemetry HTTPS connections, ignoring alternate CA overrides
   inherited from the environment ([#10]).
 
-## Fixed
+### Fixed
 
 - Fixed the workspace_root to default to CWD when launched with stdio ([#13])
 - Script path is checked for existence prior to invocation ([#13])
