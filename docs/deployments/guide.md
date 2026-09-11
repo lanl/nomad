@@ -21,12 +21,7 @@ docker run --rm \
    --publish 38217:38217 \
    --volume "$PWD/cache:/var/cache/nomad" \
    --volume "$PWD/secrets/git-credentials:/run/secrets/git-credentials:ro" \
-   nomad-demo:latest \
-   serve \
-      --transport=http \
-      --host=0.0.0.0 \
-      --port=38217 \
-      /nomad/container/demo/nomad.yml
+   ghcr.io/lanl/nomad:latest
 ```
 :::
 
@@ -35,16 +30,10 @@ docker run --rm \
 module load charliecloud
 export CH_IMAGE_USERNAME=your_username
 export CH_IMAGE_PASSWORD=your_token_or_password
-ch-image pull --auth registry.example.org/nomad-demo:latest nomad-demo:latest
+ch-image pull --auth ghcr.io/lanl/nomad:latest nomad-demo:latest
 ch-run --cdi nomad-demo:latest \
    --bind=./cache:/var/cache/nomad \
-   --bind=./secrets/git-credentials:/run/secrets/git-credentials \
-   -- \
-   nomad serve \
-      --transport=http \
-      --host=$(hostname) \
-      --port=38217 \
-      /nomad/container/demo/nomad.yml
+   --bind=./secrets/git-credentials:/run/secrets/git-credentials
 ```
 :::
 
@@ -58,12 +47,7 @@ singularity exec \
    --nv \
    --bind=./cache:/var/cache/nomad \
    --bind=./secrets/git-credentials:/run/secrets/git-credentials:ro \
-   docker://registry.example.org/nomad-demo:latest \
-   nomad serve \
-      --transport=http \
-      --host=$(hostname) \
-      --port=38217 \
-      /nomad/container/demo/nomad.yml
+   docker://ghcr.io/lanl/nomad:latest
 ```
 :::
 
@@ -80,7 +64,7 @@ docker run --rm \
    --add-host=host.docker.internal:host-gateway \
    --env OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4318 \
    --publish 38217:38217 \
-   nomad-demo:latest
+   ghcr.io/lanl/nomad:latest
 ```
 
 The collector must listen for OTLP/HTTP traffic on a host interface reachable
@@ -244,7 +228,7 @@ Then mount that file when the container needs to pull private `oras://` model so
 docker run --rm \
    --env NOMAD_AUTH_FILE=/run/secrets/docker-config.json \
    --volume "$PWD/secrets/docker/config.json:/run/secrets/docker-config.json:ro" \
-   registry.example.com/nomad-demo:latest
+   ghcr.io/lanl/noamd:latest
 ```
 
 If `NOMAD_AUTH_FILE` is not set, Nomad falls back to `DOCKER_CONFIG/config.json`,
