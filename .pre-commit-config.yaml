@@ -35,6 +35,12 @@ repos:
         exclude: ^models/
   - repo: local
     hooks:
+      - id: check-all-uv-locks
+        name: check all uv lockfiles
+        entry: just check-uv-locks
+        language: system
+        files: (^|/)(pyproject\.toml|uv\.lock|uv\.toml)$
+        pass_filenames: false
       - id: strip-notebook-outputs
         name: check notebook outputs
         entry: nbstripout --verify --keep-id

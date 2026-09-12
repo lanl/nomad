@@ -6,6 +6,14 @@ default:
 lint:
     uv run --group lint prek run --all-files
 
+check-uv-locks:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    while IFS= read -r -d '' lockfile; do
+        echo "Checking ${lockfile}"
+        uv lock --project "$(dirname "${lockfile}")" --check
+    done < <(git ls-files -z -- ':(glob)**/uv.lock')
+
 test *FLAGS:
     uv run --extra otel --group test pytest --quiet --durations=0 {{ FLAGS }}
 
