@@ -9,6 +9,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 env:
+  FASTMCP_MCP_CAMELCASE_COMPAT: "false"
   UV_FROZEN: "1"
   UV_LINK_MODE: symlink
   UV_PYTHON: 3.12.12

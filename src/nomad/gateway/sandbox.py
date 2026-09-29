@@ -34,7 +34,7 @@ def _jsonable(value: Any) -> Any:
     model_dump = getattr(value, "model_dump", None)
     if callable(model_dump):
         try:
-            value = model_dump(mode="python")
+            value = model_dump(mode="python", by_alias=True)
         except TypeError:
             value = model_dump()
     try:

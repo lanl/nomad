@@ -39,7 +39,7 @@ class LoggingMiddleware(Middleware):
     ) -> CallToolResult:
         start_ns = ctx.metadata.pop("start_ns", None)
         duration_ms = (time.perf_counter_ns() - start_ns) / 1e6 if start_ns else None
-        payload = getattr(result, "structuredContent", None)
+        payload = result.structured_content
         size = 0
         if payload is not None:
             try:
