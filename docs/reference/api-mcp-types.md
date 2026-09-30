@@ -28,7 +28,7 @@ dtype and minimum tensor rank. The axis labels document the expected shape but
 do not enforce axis semantics or fixed dimension sizes.
 
 {py:data}`nomad.well_format.Tensor` is a {py:class}`torch.Tensor`, with Pydantic annotations to add serialization and a JSON schema.
-Serialization detaches and moves the tensor to the CPU before serializing with {py:function}`torch.save`, followed by zstd compression and base64 encoding.
+Serialization detaches and moves the tensor to the CPU before serializing with {py:func}`torch.save`, followed by zstd compression and base64 encoding.
 Nomad explicitly tests that data, shape and `dtype` are preserved, but other attributes are expected to survive as well.
 
 ## Well Format Reference

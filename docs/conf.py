@@ -4,8 +4,12 @@ import sys
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 
+from docutils import nodes
 from dotenv import dotenv_values, load_dotenv
+from myst_parser.mdit_to_docutils.sphinx_ import SphinxRenderer
+from myst_parser.parsers.mdit import create_md_parser
 from pygments.lexers import get_lexer_by_name
+from sphinx.directives import SphinxDirective
 from sphinx.errors import SphinxError
 from sphinx.highlighting import lexers
 
@@ -95,6 +99,29 @@ autodoc_type_aliases = {
     "ServerParameters": "nomad.gateway.config.ServerParameters",
     "MiddlewareEntry": "nomad.gateway.config.MiddlewareEntry",
 }
+
+
+class _MystDocstringDirective(SphinxDirective):
+    """Parse an autodoc docstring as MyST inside reStructuredText output."""
+
+    has_content = True
+
+    def run(self):
+        container = nodes.container()
+        parser = create_md_parser(self.env.myst_config, SphinxRenderer)
+        parser.options["document"] = self.state.document
+        parser.options["current_node"] = container
+        parser.render("\n".join(self.content))
+        return list(container.children)
+
+
+def _parse_myst_docstrings(app, what, name, obj, options, lines) -> None:
+    if name != "nomad.well_format.AutoRegressiveInput":
+        return
+
+    lines[:] = [".. myst-docstring::", "", *(f"   {line}" for line in lines)]
+
+
 intersphinx_mapping = {
     "python": (
         "https://docs.python.org/3",
@@ -285,4 +312,6 @@ agent_skills_docs.write_generated_agent_skills_docs(
 def setup(app):
     # Treat `jsonc` fences as JSON5 so comments are highlighted without warnings.
     lexers["jsonc"] = get_lexer_by_name("json5")
+    app.add_directive("myst-docstring", _MystDocstringDirective)
+    app.connect("autodoc-process-docstring", _parse_myst_docstrings)
     app.connect("build-finished", _check_generated_docs_for_secrets)

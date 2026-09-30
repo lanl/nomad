@@ -499,19 +499,19 @@ class WellFormat(BaseModel):
 class AutoRegressiveInput(BaseModel):
     """Input schema for models that roll out a Well state over time.
 
-    {py.class}`nomad.fm_base_tool.TorchModuleTool` use this input type are
-    expected to conform to the following spec, to be interpreted per
-    [RFC-2119][https://datatracker.ietf.org/doc/html/rfc2119]
+    {py:class}`nomad.fm_base_tool.TorchModuleTool` instances using this input type
+    are expected to conform to the following spec, to be interpreted per
+    [RFC-2119](https://datatracker.ietf.org/doc/html/rfc2119)
 
-    - A `TorchModuleTool` using this input schema SHOULD have an output schema of {py.class}`nomad.well_format.WellFormat`.
-        - If a different output schema is used it SHALL confirm to the remain trajectory requirements.
+    - A `TorchModuleTool` using this input schema SHOULD have an output schema of {py:class}`nomad.well_format.WellFormat`.
+        - If a different output schema is used it SHALL conform to the remaining trajectory requirements.
     - The returned trajectory SHOULD NOT include the snapshots provided by `initial_state`.
-        - The input `WellFormat` MAY contain more than one input snapshots.
+        - The input `WellFormat` MAY contain more than one input snapshot.
     - The returned trajectory SHOULD cover at least up to the requested `duration`
         - If duration is an integer, the returned trajectory SHALL contain `duration` snapshots
-        - If duration is an float, the time stamp of the final snapshot SHOULD be greater than or equal to `duration`.
-    - The returned trajectory SHOULD NOT omit optional entries (ie. boundary_conditions, dimensions).
-        - The returned trajectory SHALL NOT omit optional entires that do not exactly match the entries provided by `initial_state`.
+        - If duration is a float, the time stamp of the final snapshot SHOULD be greater than or equal to `duration`.
+    - The returned trajectory SHOULD NOT omit optional entries (i.e., boundary_conditions, dimensions).
+        - The returned trajectory SHALL NOT omit optional entries that do not exactly match the entries provided by `initial_state`.
 
     """
 
