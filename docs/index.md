@@ -46,7 +46,7 @@ SciFMs easier to package, deploy, and integrate into real agent workflows.
 - {doc}`Tool Discovery and Model Cards Reference </reference/api-tools>`
 - {doc}`Tool Manager Reference </reference/api-tool-manager>`
 - {doc}`TorchModuleTool Reference </reference/api-torch-module-tool>`
-- {doc}`Well Format Reference </reference/api-well-format>`
+- {doc}`Builtin MCP Types </reference/api-mcp-types>`
 
 ## Core Concepts
 

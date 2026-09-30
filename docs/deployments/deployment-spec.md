@@ -2,9 +2,11 @@
 
 This page provides detailed requirements for deploying SciFMs with Nomad.
 
+:::{important}
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD",
 "SHOULD NOT", "RECOMMENDED",  "MAY", and "OPTIONAL" in this document are to be
 interpreted as described in [RFC-2119][].
+:::
 
 ## Model Code and Dependencies
 
