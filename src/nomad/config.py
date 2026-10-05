@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import pkgutil
+from dataclasses import replace
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,8 @@ from ._torch_module_compat import (
 from .common.config_errors import load_config_mapping, validate_config_data
 from .common.name_sanitize import sanitize_mcp_name
 from .fm_base_tool import TorchModuleTool
+from .model_env import PythonEnvironment, resolve_model_environment
+from .model_rpc import RemoteModel, inspect_remote_model
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +104,9 @@ class TorchModuleConfig(BaseModel):
     batch_size: int | None = None
     """Optional maximum batch size override."""
 
+    env: str | list[str] | None = None
+    """Requirements file, project file, or PEP 508 requirements for an isolated model environment."""
+
     model_config = ConfigDict(extra="allow")
 
     def resolve_spec(self, *, base_dir: Path | None = None) -> RepoSpec:
@@ -110,6 +116,30 @@ class TorchModuleConfig(BaseModel):
     def resolve_source(self, *, base_dir: Path | None = None) -> str | Path:
         """Resolve ``name_or_path`` to a loadable local path."""
         return self.resolve_spec(base_dir=base_dir).pull()
+
+    def resolve_environment(self, *, base_dir: Path | None = None) -> PythonEnvironment:
+        """Resolve ``env`` relative to the server configuration file."""
+        return resolve_model_environment(self.env, base_dir=base_dir)
+
+    def build_remote(self, *, base_dir: Path | None = None) -> RemoteModel:
+        """Inspect this model inside its configured subprocess environment."""
+        environment = self.resolve_environment(base_dir=base_dir)
+        spec = self.resolve_spec(base_dir=base_dir)
+        remote = inspect_remote_model(
+            environment=environment,
+            model_class=self.model_class,
+            source=spec.pull(),
+            tool_name=self.tool_name,
+            batch_size=self.batch_size,
+        )
+        name = remote.name
+        if self.tool_name:
+            name = self.tool_name
+        elif getattr(spec, "scheme", None) == "hf":
+            name = spec.location
+        elif not name:
+            name = spec.location
+        return replace(remote, name=sanitize_mcp_name(name))
 
     def _instantiate_from_spec(self, spec: RepoSpec) -> TorchModuleTool:
         """Instantiate the configured model class from an already parsed source."""
@@ -239,6 +269,9 @@ class ToolManagerConfig(BaseModel):
     disk_idle_seconds: float | None = Field(default=600.0, ge=0)
     """Tool idle seconds after full offload before dropping the resident instance. ``None`` keeps resident instances loaded."""
 
+    venv_idle_seconds: float | None = Field(default=1200.0, ge=0)
+    """Idle seconds before terminating an isolated model subprocess. ``None`` disables subprocess idle eviction."""
+
     model_config = ConfigDict(extra="forbid")
 
     def instantiate(self, *, device_provider=None, **overrides):
@@ -348,6 +381,10 @@ class ServerConfig(BaseModel):
     def build_tool(self, fmod: TorchModuleConfig, **overrides) -> TorchModuleTool:
         """Instantiate one model entry and apply configured tool overrides."""
         return fmod.build_tool(base_dir=self.context_dir, **overrides)
+
+    def build_remote(self, fmod: TorchModuleConfig) -> RemoteModel:
+        """Inspect one subprocess-backed model entry."""
+        return fmod.build_remote(base_dir=self.context_dir)
 
     @classmethod
     def from_file(cls, path: str | Path) -> ServerConfig:

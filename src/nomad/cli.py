@@ -12,7 +12,6 @@ import typer
 from fastmcp import FastMCP
 from typer.core import TyperCommand
 
-from ._torch_module_compat import add_torch_module_tool_to_fastmcp
 from .common.config_errors import ConfigError
 from .common.upstream_errors import UpstreamConnectionError
 from .config import ServerConfig
@@ -238,32 +237,24 @@ def serve(
 
     manager_cfg = config.tool_manager
     use_manager = use_tool_manager and manager_cfg.enabled
+    needs_worker_manager = bool(config.fmod_models)
 
     if not manager_cfg.enabled and use_tool_manager:
         LOGGER.info("Tool manager disabled by configuration")
 
-    manager = manager_cfg.instantiate() if use_manager else None
+    manager = manager_cfg.instantiate() if use_manager or needs_worker_manager else None
     LOGGER.info("Visible devices: %s", _format_visible_devices(manager))
     for fm_config in config.fmod_models:
         fm_name = fm_config.tool_name or fm_config.name_or_path
         try:
-            tool = config.build_tool(fm_config)
-
-            source = fm_config.resolve_source(base_dir=config.context_dir)
-
             LOGGER.info("Registering torch model '%s'", fm_name)
-
-            if manager:
-                manager.register_tool(
-                    tool.name,
-                    tool,
-                    source=source,
-                )
-            else:
-                add_torch_module_tool_to_fastmcp(server, tool)
-
+            assert manager is not None
+            remote = config.build_remote(fm_config)
+            manager.register_remote_tool(remote)
+            source = Path(remote.source)
+            tool_name = remote.name
             card_locator.register(
-                tool.name or fm_config.name_or_path,
+                tool_name,
                 source,
             )
         except Exception:
@@ -296,6 +287,8 @@ def serve(
 
         server.run(transport=transport, **run_kwargs)
     finally:
+        if manager is not None and hasattr(manager, "close_workers"):
+            manager.close_workers()
         shutdown_otel()
 
 

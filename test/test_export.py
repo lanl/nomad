@@ -260,7 +260,7 @@ def test_export_model_report_writes_cards_and_linked_descriptions(
             self.name = name
             self.description = f"Description for {name}."
 
-    def fake_build_tool(self, fm_config):
+    def fake_build_remote(self, fm_config):
         return DummyTool(fm_config.tool_name)
 
     def fake_resolve_source(self, *, base_dir=None):
@@ -276,7 +276,7 @@ def test_export_model_report_writes_cards_and_linked_descriptions(
         "nomad.config.ToolConfig.fn", property(lambda self: regular_report_tool)
     )
 
-    monkeypatch.setattr("nomad.config.ServerConfig.build_tool", fake_build_tool)
+    monkeypatch.setattr("nomad.config.ServerConfig.build_remote", fake_build_remote)
     monkeypatch.setattr(
         "nomad.config.TorchModuleConfig.resolve_source", fake_resolve_source
     )

@@ -20,6 +20,7 @@ tool_manager:
   idle_seconds: 120
   gc_idle_seconds: 300
   disk_idle_seconds: 600
+  venv_idle_seconds: 1200
   max_pending_per_tool: 50000
 search_tool:
   expose: true
@@ -32,6 +33,7 @@ tools:
 fmod_models:
   - model_class: my_package.models.MyTorchTool
     name_or_path: my-org/my-model
+    env: requirements.txt
     tool_name: my-model
     batch_size: 16
 ```
@@ -39,6 +41,23 @@ fmod_models:
 Use `tools` for regular Python callables and `fmod_models` for
 {py:class}`nomad.fm_base_tool.TorchModuleTool` implementations. `name_or_path`
 can point at several model source types:
+
+Set a model's `env` to a `requirements.txt` path, a `pyproject.toml` path, a
+list of PEP 508 requirements, or one PEP 508 requirement string. Relative file
+paths are resolved from the server configuration file. Nomad installs a
+`pyproject.toml` project together with its dependencies.
+
+Models run in per-device Python subprocesses. When `env` is omitted, the
+subprocess uses the same virtual environment and Python executable as the Nomad
+host. For explicit environments, Nomad prefers `uv` to create the virtual
+environment and falls back to the standard-library `venv` module. Explicit
+environments are content-addressed under
+`$XDG_CACHE_HOME/nomad/venv` (or `~/.cache/nomad/venv`) and reused across
+models with the same requirements. Nomad injects the currently running Nomad
+package into each explicit environment's requirements. A slot keeps its
+subprocess when switching between models with the same environment;
+`tool_manager.venv_idle_seconds` controls when an idle subprocess is terminated
+and defaults to 1200 seconds.
 
 | Name | Example |
 | --- | --- |

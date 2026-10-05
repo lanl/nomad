@@ -187,13 +187,17 @@ def test_tool_manager_config_rejects_unknown_options():
 
 @pytest.mark.parametrize(
     "field",
-    ["idle_seconds", "gc_idle_seconds", "disk_idle_seconds"],
+    ["idle_seconds", "gc_idle_seconds", "disk_idle_seconds", "venv_idle_seconds"],
 )
 def test_tool_manager_config_rejects_negative_seconds(field: str):
     with pytest.raises(ValidationError) as exc_info:
         ToolManagerConfig.model_validate({"enabled": True, field: -1})
 
     assert "greater than or equal to 0" in str(exc_info.value)
+
+
+def test_tool_manager_config_defaults_venv_idle_seconds():
+    assert ToolManagerConfig().venv_idle_seconds == 1200.0
 
 
 def test_torch_module_config_accepts_legacy_ursa_tool(monkeypatch):

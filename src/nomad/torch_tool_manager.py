@@ -19,6 +19,7 @@ from ._torch_module_compat import build_torch_module_fastmcp_tool
 from .config import ToolManagerConfig
 from .fm_base_tool import TorchModuleTool
 from .metrics import Observation
+from .model_rpc import ModelProcess, RemoteModel
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -52,6 +53,7 @@ class DeviceSlot:
     device: torch.device
     current_tool: str | None = None
     tool: TorchModuleTool | None = None
+    worker: ModelProcess | None = None
     busy: bool = False
     last_used: float = field(default_factory=time.monotonic)
 
@@ -60,7 +62,7 @@ class DeviceSlot:
 class ToolRequest:
     """Represents a pending tool invocation."""
 
-    input: BaseModel
+    input: BaseModel | dict[str, Any]
     future: asyncio.Future
     enqueued_at: float = field(default_factory=time.monotonic)
     metrics_recorded: bool = False
@@ -73,11 +75,14 @@ class ToolState:
     name: str
     registered_name: str
     tool: TorchModuleTool | None
-    cls: type[TorchModuleTool]
+    cls: type[TorchModuleTool] | None
     source: str | Path
-    args_schema: type[BaseModel]
-    output_schema: type[BaseModel]
+    args_schema: type[BaseModel] | None
+    output_schema: type[BaseModel] | None
     description: str
+    remote: RemoteModel | None = None
+    input_schema: dict[str, Any] | None = None
+    output_json_schema: dict[str, Any] | None = None
     queue: deque[ToolRequest] = field(default_factory=deque)
     enqueued: bool = False
     batch_size: int = 1
@@ -120,6 +125,8 @@ class ToolState:
             self.release_slot(device_index)
 
     def load_new_tool(self, *, is_resident_load: bool) -> TorchModuleTool:
+        if self.cls is None:
+            raise RuntimeError("Isolated tools are loaded by their model subprocess")
         start = time.monotonic()
         status = "ok"
         try:
@@ -211,9 +218,11 @@ class TorchModelToolManager:
         idle_seconds = config.idle_seconds
         gc_idle_seconds = config.gc_idle_seconds
         disk_idle_seconds = config.disk_idle_seconds
+        venv_idle_seconds = config.venv_idle_seconds
         self.idle_seconds = idle_seconds
         self.gc_idle_seconds = gc_idle_seconds
         self.disk_idle_seconds = disk_idle_seconds
+        self.venv_idle_seconds = venv_idle_seconds
         max_pending_per_tool = config.max_pending_per_tool
         if max_pending_per_tool is not None and max_pending_per_tool < 1:
             raise ValueError("max_pending_per_tool must be >= 1 or None")
@@ -226,11 +235,18 @@ class TorchModelToolManager:
         self._disk_idle_threshold = (
             None if disk_threshold is None else max(disk_threshold, 0.0)
         )
+        venv_threshold = (
+            float(venv_idle_seconds) if venv_idle_seconds is not None else None
+        )
+        self._venv_idle_threshold = (
+            None if venv_threshold is None else max(venv_threshold, 0.0)
+        )
         janitor_intervals = [
             self._janitor_interval_for_threshold(configured_threshold)
             for configured_threshold in (
                 self._idle_threshold,
                 self._disk_idle_threshold,
+                self._venv_idle_threshold,
             )
             if configured_threshold is not None
         ]
@@ -346,6 +362,28 @@ class TorchModelToolManager:
         self._inflight_by_tool[name] = 0
         self._offload_tool(tool)
 
+    def register_remote_tool(self, remote: RemoteModel) -> None:
+        """Register a model whose implementation lives in a subprocess."""
+        name = remote.name
+        if name in self._tools:
+            raise ValueError(f"Tool '{name}' is already registered")
+
+        self._tools[name] = ToolState(
+            name=name,
+            registered_name=name,
+            tool=None,
+            cls=None,
+            source=remote.source,
+            args_schema=None,
+            output_schema=None,
+            description=remote.description,
+            remote=remote,
+            input_schema=remote.input_schema,
+            output_json_schema=remote.output_schema,
+            batch_size=max(1, remote.batch_size),
+        )
+        self._inflight_by_tool[name] = 0
+
     def add_to_fastmcp(self, server: FastMCP) -> dict[str, FastMCPTool]:
         """Register all managed tools with a FastMCP server."""
         fast_tools: dict[str, FastMCPTool] = {}
@@ -361,7 +399,7 @@ class TorchModelToolManager:
         input: BaseModel | dict[str, Any] | None = None,
         /,
         **kwargs: Any,
-    ) -> BaseModel:
+    ) -> BaseModel | dict[str, Any]:
         """Queue a call to ``name`` and await its result."""
         if self._closed:
             nomad_metrics.record_tool_request_rejection(name, "manager_closed")
@@ -412,6 +450,14 @@ class TorchModelToolManager:
                 await task
 
         self._tasks.clear()
+        await asyncio.to_thread(self.close_workers)
+
+    def close_workers(self) -> None:
+        """Synchronously terminate all model subprocesses owned by slots."""
+        for slot in self._device_slots:
+            if slot.worker is not None:
+                slot.worker.close()
+                slot.worker = None
 
     async def __aenter__(self) -> "TorchModelToolManager":
         return self
@@ -446,10 +492,23 @@ class TorchModelToolManager:
 
     def _normalize_input(
         self,
-        args_schema: type[BaseModel],
+        args_schema: type[BaseModel] | None,
         input: BaseModel | dict[str, Any] | None,
         **kwargs: Any,
-    ) -> BaseModel:
+    ) -> BaseModel | dict[str, Any]:
+        if args_schema is None:
+            if isinstance(input, BaseModel):
+                payload = input.model_dump(mode="json")
+            elif isinstance(input, dict):
+                payload = dict(input)
+            elif input is None:
+                payload = {}
+            else:
+                raise TypeError("Isolated model input must be an object")
+            payload.update(kwargs)
+            if not payload:
+                raise ValueError("No input provided for tool execution")
+            return payload
         if input is not None:
             if isinstance(input, args_schema):
                 return input
@@ -524,6 +583,7 @@ class TorchModelToolManager:
                 await asyncio.sleep(self._janitor_interval)
                 await self._evict_idle_tools()
                 await self._evict_disk_idle_tools()
+                await self._evict_idle_workers()
         except asyncio.CancelledError:
             raise
 
@@ -742,6 +802,53 @@ class TorchModelToolManager:
                     idle_time,
                 )
 
+    async def _evict_idle_workers(self, *, now: float | None = None) -> None:
+        threshold = self._venv_idle_threshold
+        if threshold is None:
+            return
+
+        now = time.monotonic() if now is None else now
+        candidates: list[int] = []
+        async with self._condition:
+            for index, slot in enumerate(self._device_slots):
+                if (
+                    slot.worker is not None
+                    and not slot.busy
+                    and now - slot.last_used >= threshold
+                ):
+                    slot.busy = True
+                    candidates.append(index)
+
+        for index in candidates:
+            await self._terminate_slot_worker(index, now=now)
+
+    async def _terminate_slot_worker(
+        self,
+        device_index: int,
+        *,
+        now: float | None = None,
+    ) -> None:
+        slot = self._device_slots[device_index]
+        worker = slot.worker
+        tool_name = slot.current_tool
+        try:
+            if worker is not None:
+                await self._run_blocking(worker.close)
+        finally:
+            async with self._condition:
+                slot = self._device_slots[device_index]
+                if tool_name is not None and slot.current_tool == tool_name:
+                    state = self._tools[tool_name]
+                    state.release_slot(device_index)
+                    state.last_used = time.monotonic() if now is None else now
+                    nomad_metrics.record_tool_disk_unload(tool_name)
+                    slot.current_tool = None
+                    slot.tool = None
+                slot.worker = None
+                slot.busy = False
+                slot.last_used = time.monotonic() if now is None else now
+                self._condition.notify_all()
+
     def _next_batch_size(self, state: ToolState) -> int:
         batch_size = state.batch_size
         if self._max_pending_per_tool is not None:
@@ -852,7 +959,14 @@ class TorchModelToolManager:
                         state.batch_size = new_batch
                         if state.tool is not None:
                             state.tool.batch_size = new_batch
-                        tool.batch_size = new_batch
+                        if isinstance(tool, ModelProcess):
+                            await self._run_blocking(
+                                tool.request,
+                                "set_batch_size",
+                                {"batch_size": new_batch},
+                            )
+                        else:
+                            tool.batch_size = new_batch
                         nomad_metrics.record_tool_batch_reduction(
                             tool_name,
                             slot.device,
@@ -939,18 +1053,27 @@ class TorchModelToolManager:
 
     def _run_batch(
         self,
-        tool: TorchModuleTool,
+        tool: TorchModuleTool | ModelProcess,
         state: ToolState,
         requests: list[ToolRequest],
         batch_size: int,
-    ) -> list[BaseModel]:
+    ) -> list[BaseModel | dict[str, Any] | Any]:
         inputs = [request.input for request in requests]
-        outputs = list(
-            tool.batch_as_completed(
-                inputs,
-                max_concurency=batch_size,
+        if isinstance(tool, ModelProcess):
+            serialized_inputs = [
+                item.model_dump(mode="json")
+                if isinstance(item, BaseModel)
+                else dict(item)
+                for item in inputs
+            ]
+            outputs = tool.run_batch(serialized_inputs, batch_size=batch_size)
+        else:
+            outputs = list(
+                tool.batch_as_completed(
+                    inputs,
+                    max_concurency=batch_size,
+                )
             )
-        )
         if len(outputs) != len(requests):
             raise RuntimeError(
                 f"Tool '{state.name}' returned {len(outputs)} outputs for "
@@ -966,6 +1089,8 @@ class TorchModelToolManager:
         return build_torch_module_fastmcp_tool(
             state,
             invoke=lambda args: self.call_tool(name, args),
+            parameters=state.input_schema,
+            output_schema=state.output_json_schema,
         )
 
     def _is_out_of_memory(self, exc: Exception) -> bool:
@@ -1027,13 +1152,20 @@ class TorchModelToolManager:
 
             tool_name = slot.current_tool
             tool = slot.tool
+            state = self._tools[tool_name]
+            worker = slot.worker if state.remote is not None else None
             device = slot.device
             slot.busy = True
 
         completed = False
         was_cancelled = False
         try:
-            if tool is not None:
+            if worker is not None:
+                _, was_cancelled = await self._finish_non_cancellable(
+                    worker.request,
+                    "offload",
+                )
+            elif tool is not None:
                 _, was_cancelled = await self._finish_non_cancellable(
                     self._offload_tool,
                     tool,
@@ -1072,11 +1204,16 @@ class TorchModelToolManager:
         self,
         tool_name: str,
         device_index: int,
-    ) -> TorchModuleTool:
+    ) -> TorchModuleTool | ModelProcess:
         slot = self._device_slots[device_index]
         if slot.current_tool == tool_name:
-            assert slot.tool is not None
-            return slot.tool
+            state = self._tools[tool_name]
+            if state.remote is not None:
+                if slot.worker is not None and slot.worker.alive:
+                    return slot.worker
+            else:
+                assert slot.tool is not None
+                return slot.tool
 
         if slot.current_tool is not None:
             await self._offload_slot(
@@ -1086,6 +1223,74 @@ class TorchModelToolManager:
             )
 
         state = self._tools[tool_name]
+        if state.remote is not None:
+            remote = state.remote
+            worker = slot.worker
+            if worker is not None and (
+                not worker.alive
+                or worker.environment.checksum != remote.environment.checksum
+            ):
+                await self._finish_non_cancellable(worker.close)
+                slot.worker = None
+                worker = None
+            if worker is None:
+                worker, was_cancelled = await self._finish_non_cancellable(
+                    ModelProcess,
+                    remote.environment,
+                )
+                slot.worker = worker
+                if was_cancelled:
+                    worker.close()
+                    slot.worker = None
+                    raise asyncio.CancelledError
+
+            logger.info(
+                "Loading subprocess tool '%s' onto %s in process %s",
+                tool_name,
+                slot.device,
+                worker.pid,
+            )
+            start = time.monotonic()
+            status = "ok"
+            try:
+                _, was_cancelled = await self._finish_non_cancellable(
+                    worker.load,
+                    remote,
+                    str(slot.device),
+                )
+                if state.batch_size != remote.batch_size:
+                    await self._finish_non_cancellable(
+                        worker.request,
+                        "set_batch_size",
+                        {"batch_size": state.batch_size},
+                    )
+            except Exception:
+                status = "error"
+                raise
+            finally:
+                nomad_metrics.record_tool_disk_load(
+                    tool_name,
+                    time.monotonic() - start,
+                    load_kind="resident",
+                    status=status,
+                )
+
+            slot.current_tool = tool_name
+            slot.tool = None
+            slot.last_used = time.monotonic()
+            state.mark_slot_loaded(
+                device_index,
+                now=slot.last_used,
+                is_resident=False,
+            )
+            if was_cancelled:
+                raise asyncio.CancelledError
+            return worker
+
+        if slot.worker is not None:
+            await self._finish_non_cancellable(slot.worker.close)
+            slot.worker = None
+
         is_resident_tool = False
         if state.tool is not None and state.resident_slot is None:
             state.resident_slot = device_index

@@ -422,11 +422,21 @@ def test_nomad_cli_serve_registers_resolved_model_card_source(
     class DummyTool:
         name = "dummy-tool"
         description = "Dummy tool"
+        batch_size = 1
         args_schema = DummyInput
         output_schema = DummyOutput
 
         def __call__(self, input: DummyInput) -> DummyOutput:
             return DummyOutput(value=input.value)
+
+    class DummyManager:
+        devices: list[str] = []
+
+        def register_remote_tool(self, remote):
+            self.remote = remote
+
+        def add_to_fastmcp(self, server):
+            pass
 
     class DummyModelConfig:
         tool_name = None
@@ -467,12 +477,21 @@ def test_nomad_cli_serve_registers_resolved_model_card_source(
 
     dummy_fm = DummyModelConfig()
     dummy_locator = DummyLocator()
+    manager = DummyManager()
     dummy_config = types.SimpleNamespace(
         tools=[],
-        tool_manager=types.SimpleNamespace(enabled=False),
+        tool_manager=types.SimpleNamespace(
+            enabled=False,
+            instantiate=lambda: manager,
+        ),
         fmod_models=[dummy_fm],
         context_dir=tmp_path / "config-dir",
-        build_tool=lambda fm: DummyTool(),
+        build_remote=lambda fm: types.SimpleNamespace(
+            name=DummyTool.name,
+            description=DummyTool.description,
+            batch_size=DummyTool.batch_size,
+            source=str(fm.resolve_source(base_dir=dummy_config.context_dir)),
+        ),
         search_tool=types.SimpleNamespace(expose=False),
     )
 
@@ -520,8 +539,8 @@ def test_nomad_cli_serve_continues_after_model_load_failure(
             self.registered: list[tuple[str, Path]] = []
             self.added_to_fastmcp = False
 
-        def register_tool(self, name, tool, *, source):
-            self.registered.append((name, source))
+        def register_remote_tool(self, remote):
+            self.registered.append((remote.name, Path(remote.source)))
 
         def add_to_fastmcp(self, server):
             self.added_to_fastmcp = True
@@ -553,10 +572,14 @@ def test_nomad_cli_serve_continues_after_model_load_failure(
     bad_model = DummyModelConfig("bad")
     good_model = DummyModelConfig("good")
 
-    def build_tool(fm):
+    def build_remote(fm):
         if fm is bad_model:
             raise RuntimeError("load failed")
-        return DummyTool(fm.tool_name)
+        return types.SimpleNamespace(
+            name=fm.tool_name,
+            source=str(fm.resolve_source(base_dir=tmp_path)),
+            batch_size=1,
+        )
 
     dummy_config = types.SimpleNamespace(
         tools=[],
@@ -566,7 +589,7 @@ def test_nomad_cli_serve_continues_after_model_load_failure(
         ),
         fmod_models=[bad_model, good_model],
         context_dir=tmp_path,
-        build_tool=build_tool,
+        build_remote=build_remote,
         search_tool=types.SimpleNamespace(expose=False),
     )
 
@@ -636,7 +659,7 @@ def test_nomad_cli_serve_strict_model_load_failure_exits(monkeypatch, tmp_path: 
         ),
         fmod_models=[DummyModelConfig()],
         context_dir=tmp_path,
-        build_tool=lambda fm: (_ for _ in ()).throw(RuntimeError("load failed")),
+        build_remote=lambda fm: (_ for _ in ()).throw(RuntimeError("load failed")),
         search_tool=types.SimpleNamespace(expose=False),
     )
 
@@ -684,10 +707,10 @@ def test_nomad_cli_serve_continues_after_model_registration_failure(
             self.registered: list[tuple[str, Path]] = []
             self.added_to_fastmcp = False
 
-        def register_tool(self, name, tool, *, source):
-            if name == "bad":
+        def register_remote_tool(self, remote):
+            if remote.name == "bad":
                 raise RuntimeError("registration failed")
-            self.registered.append((name, source))
+            self.registered.append((remote.name, Path(remote.source)))
 
         def add_to_fastmcp(self, server):
             self.added_to_fastmcp = True
@@ -725,7 +748,11 @@ def test_nomad_cli_serve_continues_after_model_registration_failure(
         ),
         fmod_models=models,
         context_dir=tmp_path,
-        build_tool=lambda fm: DummyTool(fm.tool_name),
+        build_remote=lambda fm: types.SimpleNamespace(
+            name=fm.tool_name,
+            source=str(fm.resolve_source(base_dir=tmp_path)),
+            batch_size=1,
+        ),
         search_tool=types.SimpleNamespace(expose=False),
     )
 

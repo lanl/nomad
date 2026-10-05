@@ -315,7 +315,7 @@ def export_model_report(config_path: Path, output_dir: Path) -> Path:
     used_names: set[str] = set()
 
     for fm_config in config.fmod_models:
-        tool = config.build_tool(fm_config)
+        tool = config.build_remote(fm_config)
         assert tool.name is not None
         if tool.name in used_names:
             raise ValueError(f"Duplicate model tool name '{tool.name}' in report")
