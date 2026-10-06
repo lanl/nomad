@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
+from datetime import timedelta
 from typing import Any
 
 from fastmcp import FastMCP
 from fastmcp.tools import FunctionTool
+from fastmcp.utilities.tasks import TaskConfig
 
 
 def _compatible_torch_module_tool_types() -> tuple[type[Any], ...]:
@@ -46,6 +48,10 @@ def build_torch_module_fastmcp_tool(
         description=tool.description,
         parameters=tool.args_schema.model_json_schema(),
         output_schema=tool.output_schema.model_json_schema(),
+        task_config=TaskConfig(
+            mode="optional",
+            poll_interval=timedelta(milliseconds=100),
+        ),
     )
 
 

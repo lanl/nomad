@@ -227,8 +227,17 @@ class ToolManagerConfig(BaseModel):
     idle_seconds: float | None = Field(default=300.0, ge=0)
     """Idle seconds before reducing a tool's device allocation by one slot. ``None`` disables device-slot idle eviction."""
 
-    max_pending_per_tool: int | None = Field(default=None, ge=1)
-    """Maximum queued requests per tool. ``None`` disables the queue limit."""
+    max_pending_per_tool: int = Field(default=2**16, ge=1)
+    """Maximum queued requests per tool."""
+
+    task_ttl_seconds: float = Field(default=900.0, gt=0)
+    """Seconds an in-memory MCP task remains available after creation."""
+
+    task_max_records: int = Field(default=2**16, ge=1)
+    """Maximum number of active and retained in-memory MCP task records."""
+
+    task_shutdown_timeout_seconds: float = Field(default=5.0, ge=0)
+    """Seconds to wait for task cancellation during server shutdown."""
 
     max_devices_per_tool: int | None = Field(default=None, ge=1)
     """Maximum device slots one tool may occupy. ``None`` uses all managed slots."""

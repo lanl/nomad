@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
@@ -13,41 +12,6 @@ from nomad.gateway.middleware.base import ToolCallContext
 from nomad.gateway.middleware.telemetry import TelemetryMiddleware
 from nomad.gateway.sandbox import SandboxResult
 from nomad.gateway.server import CodeModeGateway
-
-
-@dataclass
-class FakeSpan:
-    name: str
-    attributes: dict[str, Any]
-    ended: bool = False
-    status: Any | None = None
-    exceptions: list[Exception] = field(default_factory=list)
-
-    def set_attribute(self, key: str, value: Any) -> None:
-        self.attributes[key] = value
-
-    def set_status(self, status: Any) -> None:
-        self.status = status
-
-    def record_exception(self, exc: Exception) -> None:
-        self.exceptions.append(exc)
-
-    def end(self) -> None:
-        self.ended = True
-
-
-class FakeTracer:
-    def __init__(self):
-        self.spans: list[FakeSpan] = []
-
-    def start_span(
-        self,
-        name: str,
-        attributes: dict[str, Any] | None = None,
-    ) -> FakeSpan:
-        span = FakeSpan(name=name, attributes=attributes or {})
-        self.spans.append(span)
-        return span
 
 
 class FakeGatewayContext:
@@ -92,32 +56,34 @@ def _gateway_duration_events(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_telemetry_middleware_records_successful_tool_span():
-    tracer = FakeTracer()
-    middleware = TelemetryMiddleware(tracer=tracer)  # type: ignore[arg-type]
+async def test_telemetry_middleware_records_successful_upstream_metric(monkeypatch):
+    events: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        nomad_metrics,
+        "record_gateway_upstream_tool_call",
+        lambda server, tool, _seconds, *, status: events.append((server, tool, status)),
+    )
+    middleware = TelemetryMiddleware()
     ctx = _context()
 
     await middleware.before_tool(ctx)
     await middleware.after_tool(
         ctx,
-        CallToolResult(content=[], structuredContent={"ok": True}),
+        CallToolResult(content=[], structured_content={"ok": True}),
     )
 
-    span = tracer.spans[0]
-    assert span.name == "nomad.gateway.upstream_tool"
-    assert span.attributes["nomad.gateway.server"] == "dummy"
-    assert span.attributes["nomad.gateway.tool"] == "alpha"
-    assert span.attributes["nomad.gateway.argument_keys"] == ["value"]
-    assert span.attributes["nomad.gateway.status"] == "ok"
-    assert span.attributes["nomad.gateway.output_present"] is True
-    assert span.ended is True
-    assert span.status is not None
+    assert events == [("dummy", "alpha", "ok")]
 
 
 @pytest.mark.asyncio
-async def test_telemetry_middleware_records_tool_errors():
-    tracer = FakeTracer()
-    middleware = TelemetryMiddleware(tracer=tracer)  # type: ignore[arg-type]
+async def test_telemetry_middleware_records_upstream_error_metric(monkeypatch):
+    events: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        nomad_metrics,
+        "record_gateway_upstream_tool_call",
+        lambda server, tool, _seconds, *, status: events.append((server, tool, status)),
+    )
+    middleware = TelemetryMiddleware()
     ctx = _context()
     exc = RuntimeError("boom")
 
@@ -125,12 +91,7 @@ async def test_telemetry_middleware_records_tool_errors():
     with pytest.raises(RuntimeError, match="boom"):
         await middleware.on_tool_error(ctx, exc)
 
-    span = tracer.spans[0]
-    assert span.attributes["nomad.gateway.status"] == "error"
-    assert span.attributes["error.type"] == "RuntimeError"
-    assert span.exceptions == [exc]
-    assert span.ended is True
-    assert span.status is not None
+    assert events == [("dummy", "alpha", "error")]
 
 
 def test_gateway_config_accepts_telemetry_section(tmp_path):
@@ -164,6 +125,13 @@ def test_otel_env_false_does_not_request_exporter(monkeypatch):
     monkeypatch.delenv("OTEL_TRACES_EXPORTER", raising=False)
 
     assert otel._otel_requested(None) is False
+
+
+def test_nomad_custom_spans_use_fastmcp_tracer(monkeypatch):
+    tracer = object()
+    monkeypatch.setattr("fastmcp.telemetry.get_tracer", lambda: tracer)
+
+    assert otel.get_tracer("nomad.gateway") is tracer
 
 
 def test_shutdown_otel_flushes_without_shutdown(monkeypatch):

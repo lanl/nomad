@@ -448,9 +448,16 @@ def test_nomad_cli_serve_registers_resolved_model_card_source(
             self.register_calls.append((tool_name, source))
 
     class DummyServer:
+        last_instance = None
+
         def __init__(self, *args, **kwargs):
             self.registered_tools: list[str] = []
+            self.extensions: list[object] = []
             self.transport: str | None = None
+            DummyServer.last_instance = self
+
+        def add_extension(self, extension):
+            self.extensions.append(extension)
 
         def add_tool(self, tool):
             self.registered_tools.append(tool.name)
@@ -469,7 +476,11 @@ def test_nomad_cli_serve_registers_resolved_model_card_source(
     dummy_locator = DummyLocator()
     dummy_config = types.SimpleNamespace(
         tools=[],
-        tool_manager=types.SimpleNamespace(enabled=False),
+        tool_manager=types.SimpleNamespace(
+            enabled=False,
+            task_ttl_seconds=123,
+            task_max_records=456,
+        ),
         fmod_models=[dummy_fm],
         context_dir=tmp_path / "config-dir",
         build_tool=lambda fm: DummyTool(),
@@ -494,6 +505,11 @@ def test_nomad_cli_serve_registers_resolved_model_card_source(
     )
 
     assert result.exit_code == 0
+    extension = DummyServer.last_instance.extensions[0]
+    assert isinstance(extension, nomad_cli.NomadTasksExtension)
+    assert extension._ttl_seconds == 123
+    assert extension._max_records == 456
+    assert extension._shutdown_timeout_seconds == 5
     assert dummy_fm.resolve_calls == [dummy_config.context_dir]
     assert dummy_locator.register_calls == [("dummy-tool", resolved_model_dir)]
 
@@ -539,6 +555,9 @@ def test_nomad_cli_serve_continues_after_model_load_failure(
         def __init__(self, *args, **kwargs):
             pass
 
+        def add_extension(self, extension):
+            pass
+
         def tool(self, **kwargs):
             def decorator(fn):
                 return fn
@@ -563,6 +582,8 @@ def test_nomad_cli_serve_continues_after_model_load_failure(
         tool_manager=types.SimpleNamespace(
             enabled=True,
             instantiate=lambda: manager,
+            task_ttl_seconds=900,
+            task_max_records=2**16,
         ),
         fmod_models=[bad_model, good_model],
         context_dir=tmp_path,
@@ -608,15 +629,24 @@ def test_nomad_cli_serve_strict_model_load_failure_exits(monkeypatch, tmp_path: 
     class DummyManager:
         devices: list[str] = []
 
+        def __init__(self):
+            self.closed = False
+
         def add_to_fastmcp(self, server):
             raise AssertionError(
                 "manager should not be registered after strict failure"
             )
 
+        async def aclose(self):
+            self.closed = True
+
     class DummyServer:
         ran = False
 
         def __init__(self, *args, **kwargs):
+            pass
+
+        def add_extension(self, extension):
             pass
 
         def tool(self, **kwargs):
@@ -628,11 +658,12 @@ def test_nomad_cli_serve_strict_model_load_failure_exits(monkeypatch, tmp_path: 
         def run(self, *, transport, **kwargs):
             DummyServer.ran = True
 
+    manager = DummyManager()
     dummy_config = types.SimpleNamespace(
         tools=[],
         tool_manager=types.SimpleNamespace(
             enabled=True,
-            instantiate=lambda: DummyManager(),
+            instantiate=lambda: manager,
         ),
         fmod_models=[DummyModelConfig()],
         context_dir=tmp_path,
@@ -659,6 +690,7 @@ def test_nomad_cli_serve_strict_model_load_failure_exits(monkeypatch, tmp_path: 
     assert result.exit_code == 1
     assert isinstance(result.exception, RuntimeError)
     assert DummyServer.ran is False
+    assert manager.closed is True
     assert "Failed to load torch model: `bad`" in result.stderr
 
 
@@ -705,6 +737,9 @@ def test_nomad_cli_serve_continues_after_model_registration_failure(
         def __init__(self, *args, **kwargs):
             pass
 
+        def add_extension(self, extension):
+            pass
+
         def tool(self, **kwargs):
             def decorator(fn):
                 return fn
@@ -722,6 +757,8 @@ def test_nomad_cli_serve_continues_after_model_registration_failure(
         tool_manager=types.SimpleNamespace(
             enabled=True,
             instantiate=lambda: manager,
+            task_ttl_seconds=900,
+            task_max_records=2**16,
         ),
         fmod_models=models,
         context_dir=tmp_path,

@@ -1,19 +1,27 @@
 import asyncio
 import contextlib
+import inspect
 import threading
 import time
 from collections.abc import Sequence
+from datetime import timedelta
 from typing import ClassVar
 
 import pytest
 import torch
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
+from mcp import Client as MCPClient
 from pydantic import BaseModel
 
 from nomad import metrics as nomad_metrics
 from nomad.config import ToolManagerConfig
 from nomad.fm_base_tool import TorchModuleTool, default_device
-from nomad.torch_tool_manager import ToolRequest, TorchModelToolManager
+from nomad.task_extension import NomadTasksClientExtension, NomadTasksExtension
+from nomad.torch_tool_manager import (
+    ToolRequest,
+    TorchModelToolManager,
+)
 
 
 class DummyModule(torch.nn.Module):
@@ -435,6 +443,172 @@ async def test_scheduler_reserves_capacity_for_other_queued_tools(
 
 
 @pytest.mark.asyncio()
+async def test_full_tool_queue_raises_server_busy(dummy_tool_factory):
+    manager = TorchModelToolManager(
+        ToolManagerConfig(max_pending_per_tool=1),
+        device_provider=lambda: [torch.device("cpu")],
+    )
+    tool = dummy_tool_factory(label="busy")
+    manager.register_tool("busy", tool, source=DummyTool.clone_sources["busy"])
+
+    loop = asyncio.get_running_loop()
+    await manager._enqueue_request(
+        "busy",
+        ToolRequest(input=DummyInput(value=1), future=loop.create_future()),
+    )
+
+    with pytest.raises(ToolError, match="Server busy"):
+        await manager._enqueue_request(
+            "busy",
+            ToolRequest(input=DummyInput(value=2), future=loop.create_future()),
+        )
+
+    await manager.aclose()
+
+
+@pytest.mark.asyncio()
+async def test_close_settles_and_drains_queued_requests(dummy_tool_factory):
+    manager = TorchModelToolManager(device_provider=lambda: [torch.device("cpu")])
+    tool = dummy_tool_factory(label="close-queued")
+    manager.register_tool(
+        "close-queued",
+        tool,
+        source=DummyTool.clone_sources["close-queued"],
+    )
+    request = ToolRequest(
+        input=DummyInput(value=1),
+        future=asyncio.get_running_loop().create_future(),
+    )
+    await manager._enqueue_request("close-queued", request)
+
+    await manager.aclose()
+
+    state = manager._tools["close-queued"]
+    assert request.future.cancelled()
+    assert not state.queue
+    assert state.queued_count == 0
+
+
+@pytest.mark.asyncio()
+async def test_managed_fastmcp_tool_has_no_task_runtime_parameters(dummy_tool_factory):
+    manager = TorchModelToolManager(
+        ToolManagerConfig(max_pending_per_tool=100),
+        device_provider=lambda: [torch.device("cpu")],
+    )
+    tool = dummy_tool_factory(label="managed-tool")
+    manager.register_tool(
+        "managed-tool", tool, source=DummyTool.clone_sources["managed-tool"]
+    )
+    server = FastMCP("managed-tool-test")
+
+    fast_tool = manager.add_to_fastmcp(server)["managed-tool"]
+
+    assert set(inspect.signature(fast_tool.fn).parameters) == {"input_data"}
+    assert fast_tool.task_config.mode == "optional"
+    assert fast_tool.task_config.poll_interval == timedelta(milliseconds=100)
+
+    await manager.aclose()
+
+
+@pytest.mark.asyncio()
+async def test_plain_mcp_client_uses_dependency_free_foreground_tool(
+    dummy_tool_factory,
+):
+    manager = TorchModelToolManager(
+        ToolManagerConfig(max_pending_per_tool=4),
+        device_provider=lambda: [torch.device("cpu")],
+    )
+    tool = dummy_tool_factory(label="foreground-call")
+    tool_name = tool.name or "foreground-call"
+    manager.register_tool(
+        tool_name,
+        tool,
+        source=DummyTool.clone_sources["foreground-call"],
+    )
+
+    server = FastMCP("foreground-call-test")
+    manager.add_to_fastmcp(server)
+    server.add_extension(NomadTasksExtension(tool_names={tool_name}))
+
+    try:
+        async with MCPClient(server._mcp_server) as client:
+            listed = await client.list_tools()
+            assert tool_name in {listed_tool.name for listed_tool in listed.tools}
+            result = await client.call_tool(tool_name, {"value": 41})
+    finally:
+        await manager.aclose()
+
+    assert result.structured_content == {"value": 42}
+
+
+@pytest.mark.asyncio()
+async def test_managed_fastmcp_tool_runs_as_background_task(
+    dummy_tool_factory,
+):
+    manager = TorchModelToolManager(
+        ToolManagerConfig(max_pending_per_tool=4),
+        device_provider=lambda: [torch.device("cpu")],
+    )
+    tool = dummy_tool_factory(label="background-task")
+    tool_name = tool.name or "background-task"
+    manager.register_tool(
+        tool_name,
+        tool,
+        source=DummyTool.clone_sources["background-task"],
+    )
+    server = FastMCP("background-task-test")
+    task_extension = NomadTasksExtension(tool_names={tool_name})
+    server.add_extension(task_extension)
+    manager.add_to_fastmcp(server)
+
+    try:
+        async with MCPClient(
+            server._mcp_server,
+            extensions=[NomadTasksClientExtension()],
+        ) as client:
+            result = await client.call_tool(tool_name, {"value": 41})
+            assert {record.status for record in task_extension._records.values()} == {
+                "completed"
+            }
+    finally:
+        await manager.aclose()
+
+    assert result.structured_content == {"value": 42}
+
+
+@pytest.mark.asyncio()
+async def test_cancelling_an_inflight_call_settles_its_future(dummy_tool_factory):
+    manager = TorchModelToolManager(device_provider=lambda: [torch.device("cpu")])
+    forward_started = threading.Event()
+    forward_release = threading.Event()
+    tool = dummy_tool_factory(
+        label="cancel-inflight",
+        forward_started=forward_started,
+        forward_release=forward_release,
+    )
+    manager.register_tool(
+        "cancel-inflight",
+        tool,
+        source=DummyTool.clone_sources["cancel-inflight"],
+    )
+
+    call = asyncio.create_task(manager.call_tool("cancel-inflight", {"value": 1}))
+    try:
+        assert await asyncio.to_thread(forward_started.wait, 1.0)
+        request = next(iter(manager._requests))
+
+        call.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await call
+
+        assert request.future.cancelled()
+        assert request not in manager._requests
+    finally:
+        forward_release.set()
+        await manager.aclose()
+
+
+@pytest.mark.asyncio()
 @pytest.mark.gpu
 async def test_tool_execution_does_not_block_event_loop(dummy_tool_factory):
     device = make_accelerator_device(0)
@@ -787,6 +961,7 @@ async def test_disk_idle_unloads_cpu_tool_and_reloads_from_source(
     server = FastMCP()
     fast_tools = manager.add_to_fastmcp(server)
     assert "disk-idle" in fast_tools
+    assert fast_tools["disk-idle"].task_config.mode == "optional"
 
     clock["value"] += 0.1
     await manager._evict_disk_idle_tools(now=clock["value"])

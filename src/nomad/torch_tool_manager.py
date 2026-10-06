@@ -11,6 +11,7 @@ from typing import Any, TypeVar
 
 import torch
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 from fastmcp.tools import FunctionTool as FastMCPTool
 from pydantic import BaseModel
 
@@ -56,7 +57,7 @@ class DeviceSlot:
     last_used: float = field(default_factory=time.monotonic)
 
 
-@dataclass(slots=True)
+@dataclass(eq=False, slots=True)
 class ToolRequest:
     """Represents a pending tool invocation."""
 
@@ -64,6 +65,7 @@ class ToolRequest:
     future: asyncio.Future
     enqueued_at: float = field(default_factory=time.monotonic)
     metrics_recorded: bool = False
+    queued: bool = False
 
 
 @dataclass(slots=True)
@@ -79,6 +81,7 @@ class ToolState:
     output_schema: type[BaseModel]
     description: str
     queue: deque[ToolRequest] = field(default_factory=deque)
+    queued_count: int = 0
     enqueued: bool = False
     batch_size: int = 1
     assigned_slots: set[int] = field(default_factory=set)
@@ -215,8 +218,6 @@ class TorchModelToolManager:
         self.gc_idle_seconds = gc_idle_seconds
         self.disk_idle_seconds = disk_idle_seconds
         max_pending_per_tool = config.max_pending_per_tool
-        if max_pending_per_tool is not None and max_pending_per_tool < 1:
-            raise ValueError("max_pending_per_tool must be >= 1 or None")
         self._max_pending_per_tool = max_pending_per_tool
         threshold = float(idle_seconds) if idle_seconds is not None else None
         self._idle_threshold = None if threshold is None else max(threshold, 0.0)
@@ -272,6 +273,7 @@ class TorchModelToolManager:
 
         self._tools: dict[str, ToolState] = {}
         self._inflight_by_tool: dict[str, int] = {}
+        self._requests: set[ToolRequest] = set()
 
         self._condition = asyncio.Condition()
         self._pending_tools: deque[str] = deque()
@@ -350,9 +352,11 @@ class TorchModelToolManager:
         """Register all managed tools with a FastMCP server."""
         fast_tools: dict[str, FastMCPTool] = {}
         for name, state in self._tools.items():
-            fast_tool = self._build_fastmcp_tool(name, state)
+            fast_tool = build_torch_module_fastmcp_tool(
+                state,
+                invoke=lambda args, tool_name=name: self.call_tool(tool_name, args),
+            )
             fast_tools[name] = server.add_tool(fast_tool)
-
         return fast_tools
 
     async def call_tool(
@@ -381,7 +385,7 @@ class TorchModelToolManager:
 
         try:
             await self._enqueue_request(name, request)
-        except RuntimeError:
+        except ToolError:
             nomad_metrics.record_tool_request_rejection(name, "queue_full")
             raise
 
@@ -402,6 +406,16 @@ class TorchModelToolManager:
 
         self._closed = True
         async with self._condition:
+            for request in tuple(self._requests):
+                if not request.future.done():
+                    request.future.cancel()
+            for state in self._tools.values():
+                for request in state.queue:
+                    request.queued = False
+                state.queue.clear()
+                state.queued_count = 0
+                state.enqueued = False
+            self._pending_tools.clear()
             self._condition.notify_all()
 
         for task in list(self._tasks):
@@ -461,21 +475,26 @@ class TorchModelToolManager:
             return args_schema(**kwargs)
         raise ValueError("No input provided for tool execution")
 
-    async def _enqueue_request(self, tool_name: str, request: ToolRequest) -> None:
+    async def _enqueue_request(
+        self,
+        tool_name: str,
+        request: ToolRequest,
+    ) -> None:
         async with self._condition:
             state = self._tools[tool_name]
-
-            if self._max_pending_per_tool is not None:
-                active_pending = sum(
-                    1 for pending in state.queue if not pending.future.cancelled()
+            if state.queued_count >= self._max_pending_per_tool:
+                raise ToolError(
+                    f"Server busy: too many requests for tool '{tool_name}'"
                 )
-                if active_pending >= self._max_pending_per_tool:
-                    raise RuntimeError(
-                        f"Too many pending requests for tool '{tool_name}'"
-                    )
 
             self._mark_server_active_locked()
             state.queue.append(request)
+            request.queued = True
+            state.queued_count += 1
+            self._requests.add(request)
+            request.future.add_done_callback(
+                lambda _, queued_request=request: self._requests.discard(queued_request)
+            )
             if not state.enqueued:
                 state.enqueued = True
                 self._pending_tools.append(tool_name)
@@ -484,10 +503,15 @@ class TorchModelToolManager:
     async def _cancel_request(self, tool_name: str, request: ToolRequest) -> None:
         async with self._condition:
             state = self._tools[tool_name]
-            try:
-                state.queue.remove(request)
-            except ValueError:
-                return
+            if request.queued:
+                with contextlib.suppress(ValueError):
+                    state.queue.remove(request)
+                request.queued = False
+                state.queued_count -= 1
+                assert state.queued_count >= 0
+
+            if not request.future.done():
+                request.future.cancel()
 
             if not state.queue:
                 state.enqueued = False
@@ -591,10 +615,7 @@ class TorchModelToolManager:
         if any(slot.busy for slot in self._device_slots):
             return False
 
-        for state in self._tools.values():
-            if any(not request.future.cancelled() for request in state.queue):
-                return False
-        return True
+        return all(state.queued_count == 0 for state in self._tools.values())
 
     def _next_available_device_index(self) -> int | None:
         total = len(self._device_slots)
@@ -726,7 +747,7 @@ class TorchModelToolManager:
                     continue
                 if self._inflight_by_tool.get(tool_name, 0):
                     continue
-                if any(not request.future.cancelled() for request in state.queue):
+                if state.queued_count:
                     continue
 
                 idle_time = now - state.last_used
@@ -743,10 +764,7 @@ class TorchModelToolManager:
                 )
 
     def _next_batch_size(self, state: ToolState) -> int:
-        batch_size = state.batch_size
-        if self._max_pending_per_tool is not None:
-            batch_size = min(batch_size, self._max_pending_per_tool)
-        return batch_size
+        return min(state.batch_size, self._max_pending_per_tool)
 
     def _next_available_requests(
         self,
@@ -759,7 +777,11 @@ class TorchModelToolManager:
 
         while state.queue and len(requests) < batch_size:
             request = state.queue.popleft()
-            if request.future.cancelled():
+            if request.queued:
+                request.queued = False
+                state.queued_count -= 1
+                assert state.queued_count >= 0
+            if request.future.done():
                 continue
             requests.append(request)
 
@@ -781,9 +803,11 @@ class TorchModelToolManager:
         state = self._tools[tool_name]
         while requests:
             request = requests.pop()
-            if request.future.cancelled():
+            if request.future.done():
                 continue
             state.queue.appendleft(request)
+            request.queued = True
+            state.queued_count += 1
         if state.queue and not state.enqueued:
             state.enqueued = True
             self._pending_tools.appendleft(tool_name)
@@ -883,7 +907,7 @@ class TorchModelToolManager:
                 )
 
                 for request, output in zip(requests, results):
-                    if not request.future.cancelled():
+                    if not request.future.done():
                         request.future.set_result(output)
                         self._record_request_duration(tool_name, request, "ok")
                 break
@@ -957,16 +981,6 @@ class TorchModelToolManager:
                 f"{len(requests)} requests"
             )
         return outputs
-
-    def _build_fastmcp_tool(
-        self,
-        name: str,
-        state: ToolState,
-    ) -> FastMCPTool:
-        return build_torch_module_fastmcp_tool(
-            state,
-            invoke=lambda args: self.call_tool(name, args),
-        )
 
     def _is_out_of_memory(self, exc: Exception) -> bool:
         cuda_oom = getattr(torch.cuda, "OutOfMemoryError", ())
@@ -1154,10 +1168,7 @@ class TorchModelToolManager:
 
     def queue_length_observations(self):
         for tool_name, state in self._tools.items():
-            active_pending = sum(
-                1 for pending in state.queue if not pending.future.cancelled()
-            )
-            yield Observation(active_pending, {"tool": tool_name})
+            yield Observation(state.queued_count, {"tool": tool_name})
 
     def inflight_observations(self):
         for tool_name, count in self._inflight_by_tool.items():
