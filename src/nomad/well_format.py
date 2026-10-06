@@ -5,10 +5,12 @@ from typing import Annotated, Any
 
 import numpy as np
 import torch
+from pydantic_core import core_schema
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    GetPydanticSchema,
     PlainSerializer,
     WithJsonSchema,
     model_validator,
@@ -61,6 +63,9 @@ def _check_float_and_min_rank(min_rank: int):
 #: additional Pydantic validators when the tool interface requires those constraints.
 Tensor = Annotated[
     torch.Tensor,
+    GetPydanticSchema(
+        lambda source_type, _: core_schema.is_instance_schema(source_type)
+    ),
     BeforeValidator(_to_tensor),
     PlainSerializer(_serialize_tensor),
     WithJsonSchema(BASE_TENSOR_SCHEMA),
@@ -82,6 +87,9 @@ def TensorField(*, min_rank: int, shape_str: str):
 
     return Annotated[
         torch.Tensor,
+        GetPydanticSchema(
+            lambda source_type, _: core_schema.is_instance_schema(source_type)
+        ),
         BeforeValidator(_to_tensor),
         AfterValidator(_check_float_and_min_rank(min_rank)),
         PlainSerializer(_serialize_tensor),
@@ -186,8 +194,6 @@ def _field_spatial_shape(
 class BoundaryCondition(BaseModel):
     """Boundary condition mask and optional values for one or more fields."""
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
     associated_dims: list[str] = Field(default_factory=list)
     """Dimension names associated with this boundary condition."""
 
@@ -267,8 +273,6 @@ class Domain(BaseModel):
 
 class WellFormat(BaseModel):
     """Serializable container for gridded scientific fields and metadata."""
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     dataset_name: str
     """Human-readable dataset name."""
@@ -497,25 +501,12 @@ class WellFormat(BaseModel):
 
 
 class AutoRegressiveInput(BaseModel):
-    """Input schema for models that roll out a Well state over time.
+    """Input schema for models that evolve an initial state on a regular grid in time."""
 
-    {py:class}`nomad.fm_base_tool.TorchModuleTool` instances using this input type
-    are expected to conform to the following spec, to be interpreted per
-    [RFC-2119](https://datatracker.ietf.org/doc/html/rfc2119)
-
-    - A `TorchModuleTool` using this input schema SHOULD have an output schema of {py:class}`nomad.well_format.WellFormat`.
-        - If a different output schema is used it SHALL conform to the remaining trajectory requirements.
-    - The returned trajectory SHOULD NOT include the snapshots provided by `initial_state`.
-        - The input `WellFormat` MAY contain more than one input snapshot.
-    - The returned trajectory SHOULD cover at least up to the requested `duration`
-        - If duration is an integer, the returned trajectory SHALL contain `duration` snapshots
-        - If duration is a float, the time stamp of the final snapshot SHOULD be greater than or equal to `duration`.
-    - The returned trajectory SHOULD NOT omit optional entries (i.e., boundary_conditions, dimensions).
-        - The returned trajectory SHALL NOT omit optional entries that do not exactly match the entries provided by `initial_state`.
-
-    """
-
-    duration: int | float = Field(gt=0, description="Number of time steps to rollout")
+    duration: int | float = Field(
+        gt=0,
+        description="Number of output snapshots (int) or target final timestamp in the simulation's time units (float)",
+    )
     initial_state: WellFormat = Field(
         description="Initial WellFormat state of the simulation"
     )

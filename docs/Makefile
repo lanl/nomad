@@ -16,4 +16,7 @@ clean:
 	rm -rf $(BUILDDIR)
 
 livehtml:
-	uv run --no-dev --group docs sphinx-autobuild --port 8080 $(SOURCEDIR) $(BUILDDIR)/html
+	uv run --no-dev --group docs sphinx-autobuild \
+		--watch $(SOURCEDIR)/../src/ \
+		--port 8080 \
+		$(SOURCEDIR) $(BUILDDIR)/html

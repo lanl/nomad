@@ -1448,6 +1448,7 @@ dev = [
     { name = "rust-just", specifier = ">=1.42.0" },
 ]
 docs = [
+    { name = "autodoc-pydantic", specifier = ">=2.2.0" },
     { name = "furo", specifier = ">=2024.8.6" },
     { name = "jupyterlab", specifier = ">=4.4.8" },
     { name = "matplotlib", specifier = ">=3.8.0" },

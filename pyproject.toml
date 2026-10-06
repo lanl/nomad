@@ -75,6 +75,7 @@ docs = [
     "sphinx>=8.2.3",
     "sphinx-copybutton>=0.5.2",
     "sphinx-llm>=0.4.1",
+    "autodoc-pydantic>=2.2.0",
 ]
 [project.scripts]
 nomad = "nomad.__main__:main"

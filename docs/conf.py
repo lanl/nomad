@@ -12,6 +12,10 @@ from pygments.lexers import get_lexer_by_name
 from sphinx.directives import SphinxDirective
 from sphinx.errors import SphinxError
 from sphinx.highlighting import lexers
+from sphinx.util.inspect import TypeAliasForwardRef
+
+# Work around sphinx-doc/sphinx#14003.
+TypeAliasForwardRef.__repr__ = lambda self: self.name
 
 project = "Nomad"
 distribution = "nomad-scifm"
@@ -56,6 +60,7 @@ extensions = [
     "sphinx.ext.extlinks",
     "sphinx_copybutton",
     "sphinx_llm.txt",
+    "sphinxcontrib.autodoc_pydantic",
 ]
 
 exclude_patterns = [
@@ -99,6 +104,11 @@ autodoc_type_aliases = {
     "ServerParameters": "nomad.gateway.config.ServerParameters",
     "MiddlewareEntry": "nomad.gateway.config.MiddlewareEntry",
 }
+
+# Pydantic Autodoc Config
+autodoc_pydantic_model_show_field_summary = False
+autodoc_pydantic_model_show_validator_summary = False
+autodoc_pydantic_field_list_validators = False
 
 
 class _MystDocstringDirective(SphinxDirective):
