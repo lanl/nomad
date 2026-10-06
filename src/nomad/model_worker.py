@@ -72,7 +72,7 @@ class ModelWorker:
             "name": tool.name or model_class.__name__,
             "description": tool.description,
             "batch_size": max(1, int(tool.batch_size or 1)),
-            "input_schema": tool.args_schema.model_json_schema(),
+            "args_schema": tool.args_schema.model_json_schema(),
             "output_schema": tool.output_schema.model_json_schema(),
         }
 
@@ -83,7 +83,10 @@ class ModelWorker:
             inputs,
             max_concurency=max(1, int(params["batch_size"])),
         )
-        return [_jsonable(output) for output in outputs]
+        return [
+            tool.output_schema.model_validate(output).model_dump(mode="json")
+            for output in outputs
+        ]
 
     def offload(self) -> None:
         tool = self._require_tool()
@@ -146,22 +149,6 @@ class ModelWorker:
         if self.tool is None:
             raise RuntimeError("No model is loaded")
         return self.tool
-
-
-def _jsonable(value: Any) -> Any:
-    model_dump = getattr(value, "model_dump", None)
-    if callable(model_dump):
-        try:
-            return model_dump(mode="json")
-        except Exception:
-            return _jsonable(model_dump(mode="python"))
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, Mapping):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return [_jsonable(item) for item in value]
-    return str(value)
 
 
 def _response(request_id: Any, *, result: Any = None, error: Any = None) -> dict:

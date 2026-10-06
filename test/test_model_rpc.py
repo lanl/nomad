@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 import torch
 from fastmcp import FastMCP
+from pydantic import BaseModel, ValidationError
 
 from nomad.config import ToolManagerConfig
 from nomad.model_env import ModelEnvironment
@@ -20,6 +21,7 @@ from nomad.model_rpc import (
     RemoteModel,
     inspect_remote_model,
 )
+from nomad.model_worker import ModelWorker
 from nomad.torch_tool_manager import TorchModelToolManager
 
 
@@ -87,10 +89,32 @@ class Tool:
     )
 
     assert remote.name == "isolated"
-    assert remote.input_schema["properties"]["value"]["type"] == "integer"
+    assert remote.args_schema["properties"]["value"]["type"] == "integer"
     with ModelProcess(environment) as process:  # type: ignore[arg-type]
         process.load(remote, "cpu")
         assert process.run_batch([{"value": 2}], batch_size=1) == [{"value": 3}]
+
+
+def test_model_worker_validates_outputs_against_declared_schema():
+    class Input(BaseModel):
+        value: int
+
+    class Output(BaseModel):
+        value: int
+
+    class InvalidOutputTool:
+        args_schema = Input
+        output_schema = Output
+
+        @staticmethod
+        def batch_as_completed(inputs, max_concurency=None):
+            return [{"unexpected": item.value} for item in inputs]
+
+    worker = ModelWorker()
+    worker.tool = InvalidOutputTool()
+
+    with pytest.raises(ValidationError, match="value"):
+        worker.run_batch({"inputs": [{"value": 2}], "batch_size": 1})
 
 
 @pytest.mark.asyncio
@@ -125,8 +149,8 @@ async def test_slot_reuses_worker_for_same_environment_and_replaces_for_new_one(
             self.alive = False
 
     monkeypatch.setattr("nomad.torch_tool_manager.ModelProcess", FakeProcess)
-    first_env = ModelEnvironment(b"same", ("same",))
-    second_env = ModelEnvironment(b"different", ("different",))
+    first_env = ModelEnvironment(("same",))
+    second_env = ModelEnvironment(("different",))
 
     def remote(name: str, environment: ModelEnvironment) -> RemoteModel:
         schema = {
@@ -141,7 +165,7 @@ async def test_slot_reuses_worker_for_same_environment_and_replaces_for_new_one(
             name=name,
             description=name,
             batch_size=1,
-            input_schema=schema,
+            args_schema=schema,
             output_schema=schema,
         )
 
@@ -448,7 +472,7 @@ class Tool:
         name="child",
         description="child fixture",
         batch_size=1,
-        input_schema=schema,
+        args_schema=schema,
         output_schema=schema,
     )
     process = ModelProcess(environment)  # type: ignore[arg-type]

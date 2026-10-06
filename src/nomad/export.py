@@ -15,11 +15,11 @@ from fastmcp.tools import Tool as FastMCPTool
 
 from nomad.common.config_errors import ConfigError
 from nomad.common.name_sanitize import sanitize_export_name, sanitize_mcp_name
-from nomad.config import ServerConfig
+from nomad.config import ServerConfig, TorchModuleConfig
 from nomad.hub import RepoSpec
 from nomad.logging_utils import configure_root_logging, parse_log_level
 from nomad.model_cards import ModelCardLocator
-from nomad.model_env import ModelEnvironment, resolve_model_environment
+from nomad.model_env import ModelEnvironment
 
 LogLevelName = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 LOGGER = logging.getLogger(__name__)
@@ -246,21 +246,18 @@ def _validate_unique_tool_names(raw_models: list[Any]) -> None:
 
 
 def _build_exported_model_environments(
-    raw_models: list[Any],
+    models: list[TorchModuleConfig],
     *,
     base_dir: Path,
     cache_root: Path,
 ) -> None:
     """Materialize explicit model environments inside an export bundle."""
-    for raw_entry in raw_models:
-        if not isinstance(raw_entry, dict):
+    for model in models:
+        if model.env is None:
             continue
-        raw_env = raw_entry.get("env")
-        if not isinstance(raw_env, (str, list)):
-            continue
-        environment = resolve_model_environment(raw_env, base_dir=base_dir)
-        if isinstance(environment, ModelEnvironment):
-            environment.ensure(cache_root=cache_root)
+        environment = model.resolve_environment(base_dir=base_dir)
+        assert isinstance(environment, ModelEnvironment)
+        environment.ensure(cache_root=cache_root)
 
 
 def export_models_config(
@@ -286,8 +283,8 @@ def export_models_config(
     raw_models = exported_data.get("fmod_models", []) or []
     if build_venvs:
         _build_exported_model_environments(
-            raw_models,
-            base_dir=output_dir,
+            config.fmod_models,
+            base_dir=config.context_dir,
             cache_root=output_dir,
         )
     entry_exports, source_exports = _collect_model_exports(
@@ -347,7 +344,7 @@ def export_model_report(config_path: Path, output_dir: Path) -> Path:
             raise ValueError(f"Duplicate model tool name '{tool.name}' in report")
         used_names.add(tool.name)
 
-        source = fm_config.resolve_source(base_dir=config.context_dir)
+        source = Path(tool.source)
         locator.register(tool.name, source)
         card_path = output_dir / f"{tool.name}.md"
         card_path.write_text(locator.read_model_card(tool.name), encoding="utf-8")

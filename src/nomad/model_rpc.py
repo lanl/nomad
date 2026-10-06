@@ -34,7 +34,7 @@ class RemoteModel:
     name: str
     description: str
     batch_size: int
-    input_schema: dict[str, Any]
+    args_schema: dict[str, Any]
     output_schema: dict[str, Any]
 
     def load_params(self, device: str) -> dict[str, Any]:
@@ -64,6 +64,12 @@ class ModelProcess:
         child_env = dict(os.environ)
         if isinstance(environment, ModelEnvironment):
             child_env.pop("PYTHONPATH", None)
+            child_env.pop("PYTHONHOME", None)
+            venv = python.parent.parent
+            child_env["VIRTUAL_ENV"] = str(venv)
+            child_env["PATH"] = os.pathsep.join(
+                part for part in (str(python.parent), child_env.get("PATH")) if part
+            )
         self._process = subprocess.Popen(
             [str(python), "-m", "nomad.model_worker"],
             stdin=subprocess.PIPE,
@@ -113,10 +119,7 @@ class ModelProcess:
         else:
             acquired = self._lock.acquire(timeout=timeout_seconds)
         if not acquired:
-            raise ModelRPCError(
-                f"Model worker RPC '{method}' timed out after "
-                f"{timeout_seconds:g} seconds"
-            )
+            raise self._timeout_error(method)
 
         try:
             if not self.alive:
@@ -139,10 +142,7 @@ class ModelProcess:
             except Empty as exc:
                 assert timeout_seconds is not None
                 self._terminate_process()
-                raise ModelRPCError(
-                    f"Model worker RPC '{method}' timed out after "
-                    f"{timeout_seconds:g} seconds"
-                ) from exc
+                raise self._timeout_error(method) from exc
             if response_line is None:
                 raise ModelRPCError(self._exited_message())
             try:
@@ -388,7 +388,7 @@ def inspect_remote_model(
         name=str(result["name"]),
         description=str(result["description"]),
         batch_size=max(1, int(result["batch_size"])),
-        input_schema=dict(result["input_schema"]),
+        args_schema=dict(result["args_schema"]),
         output_schema=dict(result["output_schema"]),
     )
 

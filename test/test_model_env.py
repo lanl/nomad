@@ -431,13 +431,27 @@ def test_real_cached_environment_runs_worker(
             "nomad/__init__.py": "",
             "nomad/model_worker.py": """
 import json
+import os
+import subprocess
 import sys
 import fixture_dependency
 
 for line in sys.stdin:
     request = json.loads(line)
     method = request["method"]
-    result = fixture_dependency.VALUE if method == "probe" else None
+    result = (
+        {
+            "dependency": fixture_dependency.VALUE,
+            "executable": sys.executable,
+            "virtual_env": os.environ.get("VIRTUAL_ENV"),
+            "spawned_executable": subprocess.check_output(
+                ["python", "-c", "import sys; print(sys.executable)"],
+                text=True,
+            ).strip(),
+        }
+        if method == "probe"
+        else None
+    )
     sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}) + "\\n")
     sys.stdout.flush()
     if method == "shutdown":
@@ -466,9 +480,16 @@ for line in sys.stdin:
     )
 
     with ModelProcess(environment) as process:
-        assert process.request("probe") == 42
+        result = process.request("probe")
 
     assert environment.python.is_file()
+    assert result["dependency"] == 42
+    assert Path(result["executable"]).resolve() == environment.python.resolve()
+    assert Path(result["spawned_executable"]).resolve() == environment.python.resolve()
+    assert (
+        Path(result["virtual_env"]).resolve()
+        == environment.python.parent.parent.resolve()
+    )
 
 
 def _write_wheel(path: Path, *, name: str, files: dict[str, str]) -> None:

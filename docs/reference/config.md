@@ -16,7 +16,6 @@ Implementation: {repo_file}`src/nomad/common/env.py <src/nomad/common/env.py>`.
 
 ```yaml
 tool_manager:
-  enabled: true
   idle_seconds: 120
   gc_idle_seconds: 300
   disk_idle_seconds: 600
@@ -60,9 +59,8 @@ subprocess when switching between models with the same environment;
 `tool_manager.venv_idle_seconds` controls when an idle subprocess is terminated
 and defaults to 1200 seconds. `tool_manager.rpc_timeout_seconds` limits each
 subprocess request to 30 seconds by default; set it to `null` to disable the
-deadline. Configured model subprocesses always use the manager's device
-assignment and process lifecycle even when the optional `--no-tool-manager`
-switch or `tool_manager.enabled: false` disables direct host-model management.
+deadline. The tool manager is always enabled and controls batching, device
+assignment, and model subprocess lifecycles.
 
 `nomad export` leaves requirement strings and lists unchanged and builds their
 explicit environments under `<output>/venv` by default, without loading the

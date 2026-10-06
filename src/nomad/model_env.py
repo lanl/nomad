@@ -26,9 +26,12 @@ _HASH_PREFIX = "nomad-venv-"
 class ModelEnvironment:
     """A normalized model environment and its content-addressed cache key."""
 
-    contents: bytes
     requirements: tuple[str, ...]
     base_dir: Path = field(default_factory=Path.cwd)
+
+    @property
+    def contents(self) -> bytes:
+        return "\n".join(self.requirements).encode()
 
     @property
     def checksum(self) -> str:
@@ -179,9 +182,7 @@ def resolve_model_environment(
     else:
         requirements = tuple(value)
 
-    contents = "\n".join(requirements).encode()
     return ModelEnvironment(
-        contents=contents,
         requirements=requirements,
         base_dir=resolved_base,
     )

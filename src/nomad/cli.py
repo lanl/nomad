@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import click
 import typer
@@ -24,6 +24,9 @@ from .logging_utils import configure_root_logging, parse_log_level
 from .model_cards import ModelCardLocator, register_model_card_tool
 from .otel import configure_otel, shutdown_otel
 from .tool_search import register_search_tool
+
+if TYPE_CHECKING:
+    from .torch_tool_manager import TorchModelToolManager
 
 LogLevelName = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 ServeTransport = Literal["stdio", "http", "streamable-http", "streamable_http"]
@@ -57,8 +60,7 @@ def _manager_lifespan(manager: Any):
         try:
             yield {}
         finally:
-            if manager is not None:
-                await manager.aclose()
+            await manager.aclose()
 
     return lifespan
 
@@ -70,23 +72,14 @@ def _normalize_serve_transport(transport: str) -> str:
     return normalized
 
 
-def _format_visible_devices(manager: Any) -> str:
-    accelerator_info = getattr(manager, "accelerator_info", None)
-    if accelerator_info:
-        formatted: list[str] = []
-        for info in accelerator_info:
-            device = getattr(info, "device", info)
-            name = getattr(info, "name", None)
-            if name and name != str(device):
-                formatted.append(f"{device} ({name})")
-            else:
-                formatted.append(str(device))
-        return ", ".join(formatted)
-
-    devices = getattr(manager, "devices", None)
-    if devices:
-        return ", ".join(str(device) for device in devices)
-    return "none"
+def _format_visible_devices(manager: "TorchModelToolManager") -> str:
+    formatted: list[str] = []
+    for info in manager.accelerator_info:
+        if info.name and info.name != str(info.device):
+            formatted.append(f"{info.device} ({info.name})")
+        else:
+            formatted.append(str(info.device))
+    return ", ".join(formatted)
 
 
 def run_code_mode_script(
@@ -172,17 +165,6 @@ def serve(
             ),
         ),
     ] = "stdio",
-    use_tool_manager: Annotated[
-        bool,
-        typer.Option(
-            "--tool-manager/--no-tool-manager",
-            help=(
-                "Enable Nomad's PyTorch tool manager for batching and shared "
-                "accelerator scheduling. Configured model subprocesses always "
-                "use it for device assignment and process lifetime."
-            ),
-        ),
-    ] = True,
     host: Annotated[
         str,
         typer.Option(
@@ -242,14 +224,7 @@ def serve(
         otlp_endpoint=getattr(telemetry, "otlp_endpoint", None),
     )
 
-    manager_cfg = config.tool_manager
-    use_manager = use_tool_manager and manager_cfg.enabled
-    needs_worker_manager = bool(config.fmod_models)
-
-    if not manager_cfg.enabled and use_tool_manager:
-        LOGGER.info("Tool manager disabled by configuration")
-
-    manager = manager_cfg.instantiate() if use_manager or needs_worker_manager else None
+    manager = config.tool_manager.instantiate()
     server = FastMCP(
         "nomad",
         on_duplicate="warn",
@@ -266,7 +241,6 @@ def serve(
         fm_name = fm_config.tool_name or fm_config.name_or_path
         try:
             LOGGER.info("Registering torch model '%s'", fm_name)
-            assert manager is not None
             remote = config.build_remote(fm_config)
             manager.register_remote_tool(remote)
             source = Path(remote.source)
@@ -280,8 +254,7 @@ def serve(
             if strict:
                 raise
 
-    if manager:
-        manager.add_to_fastmcp(server)
+    manager.add_to_fastmcp(server)
 
     if config.search_tool.expose:
         register_search_tool(

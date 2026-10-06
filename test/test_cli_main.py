@@ -44,6 +44,22 @@ def strip_ansi(text: str) -> str:
     return ANSI_ESCAPE_RE.sub("", text)
 
 
+def empty_tool_manager_config():
+    manager = types.SimpleNamespace(
+        accelerator_info=[],
+        add_to_fastmcp=lambda server: None,
+    )
+    return types.SimpleNamespace(instantiate=lambda: manager)
+
+
+def test_nomad_cli_serve_has_no_tool_manager_toggle():
+    result = CliRunner().invoke(nomad_cli.app, ["serve", "--help"])
+
+    assert result.exit_code == 0
+    assert "--tool-manager" not in strip_ansi(result.output)
+    assert "--no-tool-manager" not in strip_ansi(result.output)
+
+
 def test_nomad_cli_exposes_code_mode(monkeypatch, tmp_path: Path):
     called: dict[str, Any] = {}
 
@@ -362,9 +378,7 @@ def test_nomad_cli_export_accepts_targets(
     expected_build_venvs: bool,
 ):
     config_path = tmp_path / "nomad.yml"
-    config_path.write_text(
-        "tool_manager: {enabled: true}\ntools: []\nfmod_models: []\n"
-    )
+    config_path.write_text("tool_manager: {}\ntools: []\nfmod_models: []\n")
     output_dir = tmp_path / "bundle"
 
     called: dict[str, Any] = {}
@@ -429,9 +443,7 @@ def test_nomad_cli_export_reports_environment_build_failure(
 
 def test_nomad_cli_export_report(monkeypatch, tmp_path: Path):
     config_path = tmp_path / "nomad.yml"
-    config_path.write_text(
-        "tool_manager: {enabled: true}\ntools: []\nfmod_models: []\n"
-    )
+    config_path.write_text("tool_manager: {}\ntools: []\nfmod_models: []\n")
     output_dir = tmp_path / "report"
     called = []
 
@@ -478,7 +490,7 @@ def test_nomad_cli_serve_registers_resolved_model_card_source(
             return DummyOutput(value=input.value)
 
     class DummyManager:
-        devices: list[str] = []
+        accelerator_info: list[Any] = []
 
         def register_remote_tool(self, remote):
             self.remote = remote
@@ -529,7 +541,6 @@ def test_nomad_cli_serve_registers_resolved_model_card_source(
     dummy_config = types.SimpleNamespace(
         tools=[],
         tool_manager=types.SimpleNamespace(
-            enabled=False,
             instantiate=lambda: manager,
         ),
         fmod_models=[dummy_fm],
@@ -581,7 +592,7 @@ def test_nomad_cli_serve_continues_after_model_load_failure(
             return tmp_path / self.name_or_path
 
     class DummyManager:
-        devices: list[str] = []
+        accelerator_info: list[Any] = []
 
         def __init__(self):
             self.registered: list[tuple[str, Path]] = []
@@ -632,7 +643,6 @@ def test_nomad_cli_serve_continues_after_model_load_failure(
     dummy_config = types.SimpleNamespace(
         tools=[],
         tool_manager=types.SimpleNamespace(
-            enabled=True,
             instantiate=lambda: manager,
         ),
         fmod_models=[bad_model, good_model],
@@ -677,7 +687,7 @@ def test_nomad_cli_serve_strict_model_load_failure_exits(monkeypatch, tmp_path: 
         name_or_path = "models/bad"
 
     class DummyManager:
-        devices: list[str] = []
+        accelerator_info: list[Any] = []
 
         def add_to_fastmcp(self, server):
             raise AssertionError(
@@ -702,7 +712,6 @@ def test_nomad_cli_serve_strict_model_load_failure_exits(monkeypatch, tmp_path: 
     dummy_config = types.SimpleNamespace(
         tools=[],
         tool_manager=types.SimpleNamespace(
-            enabled=True,
             instantiate=lambda: DummyManager(),
         ),
         fmod_models=[DummyModelConfig()],
@@ -748,7 +757,7 @@ def test_nomad_cli_serve_continues_after_model_registration_failure(
             return tmp_path / self.name_or_path
 
     class DummyManager:
-        devices: list[str] = []
+        accelerator_info: list[Any] = []
 
         def __init__(self):
             self.registered: list[tuple[str, Path]] = []
@@ -790,7 +799,6 @@ def test_nomad_cli_serve_continues_after_model_registration_failure(
     dummy_config = types.SimpleNamespace(
         tools=[],
         tool_manager=types.SimpleNamespace(
-            enabled=True,
             instantiate=lambda: manager,
         ),
         fmod_models=models,
@@ -863,7 +871,7 @@ def test_nomad_cli_serve_registers_search_tools_when_enabled(
 
     dummy_config = types.SimpleNamespace(
         tools=[],
-        tool_manager=types.SimpleNamespace(enabled=False),
+        tool_manager=empty_tool_manager_config(),
         fmod_models=[],
         search_tool=types.SimpleNamespace(expose=True),
     )
@@ -919,7 +927,7 @@ def test_nomad_cli_serve_http_transport_aliases(
 
     dummy_config = types.SimpleNamespace(
         tools=[],
-        tool_manager=types.SimpleNamespace(enabled=False),
+        tool_manager=empty_tool_manager_config(),
         fmod_models=[],
         search_tool=types.SimpleNamespace(expose=False),
     )
@@ -1107,7 +1115,7 @@ def test_nomad_cli_serve_appends_jsonl_logs(monkeypatch, tmp_path: Path):
 
     dummy_config = types.SimpleNamespace(
         tools=[],
-        tool_manager=types.SimpleNamespace(enabled=False),
+        tool_manager=empty_tool_manager_config(),
         fmod_models=[],
         search_tool=types.SimpleNamespace(expose=False),
     )
@@ -1133,7 +1141,6 @@ def test_nomad_cli_serve_appends_jsonl_logs(monkeypatch, tmp_path: Path):
                 str(tmp_path / "nomad.yml"),
                 "--transport",
                 "stdio",
-                "--no-tool-manager",
                 "--log-file",
                 str(log_file),
             ],
@@ -1165,7 +1172,7 @@ def test_nomad_cli_serve_uses_default_stderr_log_format(monkeypatch, tmp_path: P
 
     dummy_config = types.SimpleNamespace(
         tools=[],
-        tool_manager=types.SimpleNamespace(enabled=False),
+        tool_manager=empty_tool_manager_config(),
         fmod_models=[],
         search_tool=types.SimpleNamespace(expose=False),
     )
@@ -1218,7 +1225,6 @@ def test_nomad_cli_serve_logs_visible_devices(monkeypatch, tmp_path: Path):
     dummy_config = types.SimpleNamespace(
         tools=[],
         tool_manager=types.SimpleNamespace(
-            enabled=True,
             instantiate=lambda: DummyManager(),
         ),
         fmod_models=[],

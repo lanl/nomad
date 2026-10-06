@@ -81,12 +81,10 @@ class ToolState:
     tool: TorchModuleTool | None
     cls: type[TorchModuleTool] | None
     source: str | Path
-    args_schema: type[BaseModel] | None
-    output_schema: type[BaseModel] | None
+    args_schema: type[BaseModel] | dict[str, Any]
+    output_schema: type[BaseModel] | dict[str, Any]
     description: str
     remote: RemoteModel | None = None
-    input_schema: dict[str, Any] | None = None
-    output_json_schema: dict[str, Any] | None = None
     queue: deque[ToolRequest] = field(default_factory=deque)
     enqueued: bool = False
     batch_size: int = 1
@@ -305,6 +303,7 @@ class TorchModelToolManager:
         ] = weakref.WeakKeyDictionary()
 
         self._condition = asyncio.Condition()
+        self._request_futures: set[asyncio.Future] = set()
         self._pending_tools: deque[str] = deque()
         self._rr_index: int = 0
         self._last_server_activity = time.monotonic()
@@ -389,12 +388,10 @@ class TorchModelToolManager:
             tool=None,
             cls=None,
             source=remote.source,
-            args_schema=None,
-            output_schema=None,
+            args_schema=remote.args_schema,
+            output_schema=remote.output_schema,
             description=remote.description,
             remote=remote,
-            input_schema=remote.input_schema,
-            output_json_schema=remote.output_schema,
             batch_size=max(1, remote.batch_size),
         )
         self._inflight_by_tool[name] = 0
@@ -430,23 +427,28 @@ class TorchModelToolManager:
         loop = asyncio.get_running_loop()
         self._ensure_started(loop)
         future: asyncio.Future = loop.create_future()
+        self._request_futures.add(future)
         request = ToolRequest(input=request_input, future=future)
 
         try:
-            await self._enqueue_request(name, request)
-        except RuntimeError:
-            nomad_metrics.record_tool_request_rejection(name, "queue_full")
-            raise
+            try:
+                await self._enqueue_request(name, request)
+            except RuntimeError:
+                nomad_metrics.record_tool_request_rejection(name, "queue_full")
+                raise
 
-        nomad_metrics.record_tool_request(name)
+            nomad_metrics.record_tool_request(name)
 
-        try:
-            return await asyncio.shield(future)
-        except asyncio.CancelledError:
-            await self._cancel_request(name, request)
-            nomad_metrics.record_tool_request_cancellation(name)
-            self._record_request_duration(name, request, "cancelled")
-            raise
+            try:
+                return await asyncio.shield(future)
+            except asyncio.CancelledError:
+                await self._cancel_request(name, request)
+                future.cancel()
+                nomad_metrics.record_tool_request_cancellation(name)
+                self._record_request_duration(name, request, "cancelled")
+                raise
+        finally:
+            self._request_futures.discard(future)
 
     async def aclose(self) -> None:
         """Cancel background tasks and drain queues."""
@@ -455,6 +457,15 @@ class TorchModelToolManager:
 
         self._closed = True
         async with self._condition:
+            for future in self._request_futures:
+                if not future.done():
+                    future.set_exception(
+                        RuntimeError("TorchModelToolManager is closed")
+                    )
+            for state in self._tools.values():
+                state.queue.clear()
+                state.enqueued = False
+            self._pending_tools.clear()
             self._condition.notify_all()
 
         for task in list(self._tasks):
@@ -511,11 +522,11 @@ class TorchModelToolManager:
 
     def _normalize_input(
         self,
-        args_schema: type[BaseModel] | None,
+        args_schema: type[BaseModel] | dict[str, Any],
         input: BaseModel | dict[str, Any] | None,
         **kwargs: Any,
     ) -> BaseModel | dict[str, Any]:
-        if args_schema is None:
+        if isinstance(args_schema, dict):
             if isinstance(input, BaseModel):
                 payload = input.model_dump(mode="json")
             elif isinstance(input, dict):
@@ -1100,7 +1111,7 @@ class TorchModelToolManager:
                 )
 
                 for request, output in zip(requests, results):
-                    if not request.future.cancelled():
+                    if not request.future.done():
                         request.future.set_result(output)
                         self._record_request_duration(tool_name, request, "ok")
                 break
@@ -1192,8 +1203,6 @@ class TorchModelToolManager:
         return build_torch_module_fastmcp_tool(
             state,
             invoke=lambda args: self.call_tool(name, args),
-            parameters=state.input_schema,
-            output_schema=state.output_json_schema,
         )
 
     def _is_out_of_memory(self, exc: Exception) -> bool:

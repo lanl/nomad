@@ -59,8 +59,7 @@ def test_export_models_config_builds_pep508_environments(
         ("other-package>=2", "third-package[extra]"),
     ]
     assert all(
-        environment.base_dir == tmp_path / "bundle"
-        for environment, _ in built_environments
+        environment.base_dir == config_dir for environment, _ in built_environments
     )
     assert [cache_root for _, cache_root in built_environments] == [
         tmp_path / "bundle",
@@ -111,7 +110,7 @@ def test_export_models_config_https_rewrites_git_sources_and_normalizes_hf(
     config_path.write_text(
         "\n".join(
             [
-                "tool_manager: {enabled: true}",
+                "tool_manager: {}",
                 "tools: []",
                 "fmod_models:",
                 "  - model_class: tests.DummyModel",
@@ -181,7 +180,7 @@ def test_export_models_config_oras_pushes_sources_and_rewrites_config(
     config_path.write_text(
         "\n".join(
             [
-                "tool_manager: {enabled: true}",
+                "tool_manager: {}",
                 "tools: []",
                 "fmod_models:",
                 "  - model_class: tests.DummyModel",
@@ -246,7 +245,7 @@ def test_export_models_config_rejects_duplicate_generated_tool_names(tmp_path: P
     config_path.write_text(
         "\n".join(
             [
-                "tool_manager: {enabled: true}",
+                "tool_manager: {}",
                 "tools: []",
                 "fmod_models:",
                 "  - model_class: tests.DummyModel",
@@ -303,7 +302,7 @@ def test_export_models_config_oras_requires_registry(tmp_path: Path):
     config_dir.mkdir()
     config_path = config_dir / "nomad.yml"
     config_path.write_text(
-        "tool_manager: {enabled: true}\ntools: []\nfmod_models: []\n",
+        "tool_manager: {}\ntools: []\nfmod_models: []\n",
         encoding="utf-8",
     )
 
@@ -322,7 +321,7 @@ def test_export_model_report_writes_cards_and_linked_descriptions(
     config_path.write_text(
         "\n".join(
             [
-                "tool_manager: {enabled: true}",
+                "tool_manager: {}",
                 "tools:",
                 "  - tool: tests.regular_report_tool",
                 "    name: regular-tool",
@@ -347,12 +346,10 @@ def test_export_model_report_writes_cards_and_linked_descriptions(
         def __init__(self, name: str):
             self.name = name
             self.description = f"Description for {name}."
+            self.source = tmp_path / name
 
     def fake_build_remote(self, fm_config):
         return DummyTool(fm_config.tool_name)
-
-    def fake_resolve_source(self, *, base_dir=None):
-        return tmp_path / self.tool_name
 
     def fake_read_model_card(self, tool_name):
         return cards[tool_name]
@@ -365,9 +362,6 @@ def test_export_model_report_writes_cards_and_linked_descriptions(
     )
 
     monkeypatch.setattr("nomad.config.ServerConfig.build_remote", fake_build_remote)
-    monkeypatch.setattr(
-        "nomad.config.TorchModuleConfig.resolve_source", fake_resolve_source
-    )
     monkeypatch.setattr(
         "nomad.export.ModelCardLocator.read_model_card", fake_read_model_card
     )

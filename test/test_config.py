@@ -96,7 +96,6 @@ def test_server_config_resolves_entries(monkeypatch):
             {"tool": f"{module_name}.DummyTool", "tool_kwargs": {"factor": 3}},
         ],
         "tool_manager": {
-            "enabled": True,
             "idle_seconds": 10.0,
             "gc_idle_seconds": 30.0,
             "disk_idle_seconds": 60.0,
@@ -107,7 +106,6 @@ def test_server_config_resolves_entries(monkeypatch):
     config = ServerConfig.model_validate(config_data)
 
     assert isinstance(config.tool_manager, ToolManagerConfig)
-    assert config.tool_manager.enabled is True
     assert config.search_tool.expose is False
     assert config.search_tool.weights.prefix_name == 8.0
     manager = config.tool_manager.instantiate()
@@ -180,7 +178,7 @@ def test_tool_config_registration_raises_for_broken_tool_import():
 
 def test_tool_manager_config_rejects_unknown_options():
     with pytest.raises(ValidationError) as exc_info:
-        ToolManagerConfig.model_validate({"enabled": True, "typo_seconds": 10})
+        ToolManagerConfig.model_validate({"typo_seconds": 10})
 
     assert "Extra inputs are not permitted" in str(exc_info.value)
 
@@ -191,7 +189,7 @@ def test_tool_manager_config_rejects_unknown_options():
 )
 def test_tool_manager_config_rejects_negative_seconds(field: str):
     with pytest.raises(ValidationError) as exc_info:
-        ToolManagerConfig.model_validate({"enabled": True, field: -1})
+        ToolManagerConfig.model_validate({field: -1})
 
     assert "greater than or equal to 0" in str(exc_info.value)
 
@@ -201,6 +199,13 @@ def test_tool_manager_config_defaults_venv_idle_seconds():
 
     assert config.venv_idle_seconds == 1200.0
     assert config.rpc_timeout_seconds == 30.0
+
+
+def test_tool_manager_config_rejects_removed_enabled_flag():
+    with pytest.raises(ValidationError) as exc_info:
+        ToolManagerConfig.model_validate({"enabled": False})
+
+    assert "Extra inputs are not permitted" in str(exc_info.value)
 
 
 @pytest.mark.parametrize("value", [0, -1])
@@ -377,7 +382,7 @@ def test_server_config_from_file_resolves_relative_model_paths_from_config_dir(
     config_path.write_text(
         "\n".join(
             [
-                "tool_manager: {enabled: true}",
+                "tool_manager: {}",
                 "tools: []",
                 "fmod_models:",
                 f"  - model_class: {module_name}.DummyModel",
@@ -566,7 +571,7 @@ def test_server_config_rejects_legacy_expose_search_tool_flag():
             {
                 "fmod_models": [],
                 "tools": [],
-                "tool_manager": {"enabled": True},
+                "tool_manager": {},
                 "expose_search_tool": True,
             }
         )
@@ -607,7 +612,7 @@ def test_server_config_from_file_wrong_type_describes_expected_shape(
 ):
     config_path = tmp_path / "nomad.yml"
     config_path.write_text(
-        "fmod_models: nope\ntools: []\ntool_manager: {enabled: true}\n",
+        "fmod_models: nope\ntools: []\ntool_manager: {}\n",
         encoding="utf-8",
     )
 
@@ -622,7 +627,7 @@ def test_server_config_from_file_range_error_describes_bound(tmp_path: Path):
     config_path.write_text(
         "fmod_models: []\n"
         "tools: []\n"
-        "tool_manager: {enabled: true}\n"
+        "tool_manager: {}\n"
         "search_tool: {candidate_limit: 0}\n",
         encoding="utf-8",
     )
@@ -641,7 +646,7 @@ def test_server_config_accepts_search_tool_weights():
         {
             "fmod_models": [],
             "tools": [],
-            "tool_manager": {"enabled": True},
+            "tool_manager": {},
             "search_tool": {
                 "expose": True,
                 "candidate_limit": 75,

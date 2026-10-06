@@ -303,9 +303,6 @@ class ToolConfig(BaseModel):
 class ToolManagerConfig(BaseModel):
     """Configuration for Torch model scheduling and subprocess lifecycle."""
 
-    enabled: bool = True
-    """Enable optional direct-tool management. Configured subprocess models always use managed device assignments."""
-
     idle_seconds: float | None = Field(default=300.0, ge=0)
     """Idle seconds before reducing a tool's device allocation by one slot. ``None`` disables device-slot idle eviction."""
 
@@ -341,7 +338,7 @@ class ToolManagerConfig(BaseModel):
         logger.debug("Initializing TorchModelToolManager")
         logger.debug(
             "TorchModelToolManager options: %s",
-            config.model_dump(exclude={"enabled"}),
+            config.model_dump(),
         )
         return TorchModelToolManager(config, device_provider=device_provider)
 
