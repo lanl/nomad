@@ -4,6 +4,7 @@ import logging
 import shutil
 import subprocess
 import sys
+import sysconfig
 from dataclasses import dataclass, field
 from hashlib import blake2b
 from importlib.metadata import PackageNotFoundError, version
@@ -17,7 +18,7 @@ from .hub import get_cache_root
 logger = logging.getLogger(__name__)
 
 _COMPLETE_MARKER = ".nomad-complete"
-_CACHE_FORMAT = "2"
+_CACHE_FORMAT = "3"
 _HASH_PREFIX = "nomad-venv-"
 
 
@@ -25,17 +26,28 @@ _HASH_PREFIX = "nomad-venv-"
 class ModelEnvironment:
     """A normalized model environment and its content-addressed cache key."""
 
-    kind: str
     contents: bytes
-    requirements: tuple[str, ...] = ()
-    source: Path | None = None
+    requirements: tuple[str, ...]
     base_dir: Path = field(default_factory=Path.cwd)
 
     @property
     def checksum(self) -> str:
+        nomad_requirement, nomad_project = _nomad_requirement()
+        return self._checksum(
+            nomad_requirement=nomad_requirement,
+            nomad_project=nomad_project,
+        )
+
+    def _checksum(self, *, nomad_requirement: str, nomad_project: bytes) -> str:
         digest = blake2b()
-        digest.update(f"{_HASH_PREFIX}{self.kind}-".encode())
+        digest.update(f"{_HASH_PREFIX}requirements-".encode())
         digest.update(self.contents)
+        digest.update(b"\0nomad-requirement\0")
+        digest.update(nomad_requirement.encode())
+        digest.update(b"\0nomad-project\0")
+        digest.update(nomad_project)
+        digest.update(b"\0python-runtime\0")
+        digest.update(_python_runtime_identity())
         return digest.hexdigest()
 
     @property
@@ -46,31 +58,37 @@ class ModelEnvironment:
     def python(self) -> Path:
         return _venv_python(self.cache_dir)
 
-    def ensure(self) -> Path:
+    def ensure(self, *, cache_root: Path | None = None) -> Path:
         """Create the cached environment if necessary and return its Python."""
-        root = get_cache_root() / "venv"
+        root = (cache_root or get_cache_root()) / "venv"
         root.mkdir(parents=True, exist_ok=True)
-        target = self.cache_dir
-        lock = FileLock(str(root / f".{self.checksum}.lock"))
+        nomad_requirement, nomad_project = _nomad_requirement()
+        checksum = self._checksum(
+            nomad_requirement=nomad_requirement,
+            nomad_project=nomad_project,
+        )
+        target = root / checksum
+        expected_marker = f"{_CACHE_FORMAT}:{checksum}\n"
+        if python := _completed_environment(target, expected_marker):
+            logger.debug("Reusing model environment %s", target)
+            return python
+
+        lock = FileLock(str(root / f".{checksum}.lock"))
         with lock:
-            python = _venv_python(target)
-            marker = target / _COMPLETE_MARKER
-            _, nomad_fingerprint = _nomad_requirement()
-            expected_marker = f"{_CACHE_FORMAT}:{self.checksum}:{nomad_fingerprint}\n"
-            if (
-                python.is_file()
-                and marker.is_file()
-                and marker.read_text(encoding="utf-8") == expected_marker
-            ):
+            if python := _completed_environment(target, expected_marker):
                 logger.debug("Reusing model environment %s", target)
                 return python
 
             if target.exists():
                 shutil.rmtree(target)
 
-            temporary = root / f".{self.checksum}.tmp-{uuid4().hex}"
+            temporary = root / f".{checksum}.tmp-{uuid4().hex}"
             try:
-                self._create(temporary)
+                self._create(
+                    temporary,
+                    checksum=checksum,
+                    nomad_requirement=nomad_requirement,
+                )
                 (temporary / _COMPLETE_MARKER).write_text(
                     expected_marker, encoding="utf-8"
                 )
@@ -81,10 +99,16 @@ class ModelEnvironment:
 
         return _venv_python(target)
 
-    def _create(self, target: Path) -> None:
+    def _create(
+        self,
+        target: Path,
+        *,
+        checksum: str,
+        nomad_requirement: str,
+    ) -> None:
         uv = shutil.which("uv")
         if uv:
-            logger.info("Creating model environment %s with uv", self.checksum)
+            logger.info("Creating model environment %s with uv", checksum)
             _run(
                 [
                     uv,
@@ -99,7 +123,7 @@ class ModelEnvironment:
         else:
             logger.info(
                 "uv is unavailable; creating model environment %s with venv",
-                self.checksum,
+                checksum,
             )
             _run(
                 [sys.executable, "-m", "venv", str(target)],
@@ -108,19 +132,15 @@ class ModelEnvironment:
             installer = [str(_venv_python(target)), "-m", "pip", "install"]
 
         requirements = target / ".nomad-requirements.txt"
-        requirements.write_text(
-            "\n".join([*self._requirement_lines(), _nomad_requirement()[0]]) + "\n",
-            encoding="utf-8",
-        )
-        _run([*installer, "-r", str(requirements)], cwd=self.base_dir)
-
-    def _requirement_lines(self) -> list[str]:
-        if self.kind == "requirements.txt" and self.source is not None:
-            return [f"-r {self.source.as_uri()}"]
-        if self.kind == "pyproject.toml":
-            assert self.source is not None
-            return [self.source.parent.as_uri()]
-        return list(self.requirements)
+        requirements.touch(mode=0o600)
+        try:
+            requirements.write_text(
+                "\n".join([*self.requirements, nomad_requirement]) + "\n",
+                encoding="utf-8",
+            )
+            _run([*installer, "-r", str(requirements)], cwd=self.base_dir)
+        finally:
+            requirements.unlink(missing_ok=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,7 +166,7 @@ def resolve_model_environment(
     *,
     base_dir: Path | None = None,
 ) -> PythonEnvironment:
-    """Resolve a model ``env`` value relative to its configuration file."""
+    """Normalize a model's PEP 508 requirements for subprocess execution."""
     if value is None:
         return HostEnvironment(
             python=Path(sys.executable).absolute(),
@@ -155,25 +175,12 @@ def resolve_model_environment(
 
     resolved_base = (base_dir or Path.cwd()).expanduser().resolve()
     if isinstance(value, str):
-        candidate = (resolved_base / Path(value).expanduser()).resolve()
-        if candidate.name in {"requirements.txt", "pyproject.toml"}:
-            if not candidate.is_file():
-                raise FileNotFoundError(
-                    f"Model environment file not found: {candidate}"
-                )
-            return ModelEnvironment(
-                kind=candidate.name,
-                contents=candidate.read_bytes(),
-                source=candidate,
-                base_dir=resolved_base,
-            )
         requirements = (value,)
     else:
         requirements = tuple(value)
 
     contents = "\n".join(requirements).encode()
     return ModelEnvironment(
-        kind="requirements.txt",
         contents=contents,
         requirements=requirements,
         base_dir=resolved_base,
@@ -187,13 +194,39 @@ def _venv_python(venv: Path) -> Path:
     return venv / "Scripts" / "python.exe"
 
 
-def _nomad_requirement() -> tuple[str, str]:
-    """Return a requirement for the running Nomad and its cache fingerprint."""
+def _completed_environment(target: Path, expected_marker: str) -> Path | None:
+    python = _venv_python(target)
+    marker = target / _COMPLETE_MARKER
+    try:
+        if python.is_file() and marker.read_text(encoding="utf-8") == expected_marker:
+            return python
+    except OSError:
+        pass
+    return None
+
+
+def _python_runtime_identity() -> bytes:
+    """Return a portable identity for venv compatibility, not an executable path."""
+    implementation = sys.implementation
+    return "\0".join(
+        (
+            implementation.name,
+            implementation.cache_tag or "",
+            f"{sys.version_info.major}.{sys.version_info.minor}",
+            sysconfig.get_platform(),
+        )
+    ).encode()
+
+
+def _nomad_requirement() -> tuple[str, bytes]:
+    """Return the running Nomad requirement and raw project checksum material."""
     source_root = Path(__file__).resolve().parent.parent.parent
     pyproject = source_root / "pyproject.toml"
     if pyproject.is_file():
-        fingerprint = blake2b(pyproject.read_bytes()).hexdigest()
-        return f"-e {source_root.as_uri()}", fingerprint
+        return (
+            f"nomad-scifm @ {source_root.as_uri()}",
+            pyproject.read_bytes(),
+        )
 
     try:
         installed_version = version("nomad-scifm")
@@ -202,7 +235,7 @@ def _nomad_requirement() -> tuple[str, str]:
             "Cannot construct a model environment because Nomad is not installed"
         ) from exc
     requirement = f"nomad-scifm=={installed_version}"
-    return requirement, blake2b(requirement.encode()).hexdigest()
+    return requirement, b""
 
 
 def _run(command: list[str], *, cwd: Path) -> None:

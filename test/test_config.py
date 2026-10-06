@@ -197,7 +197,70 @@ def test_tool_manager_config_rejects_negative_seconds(field: str):
 
 
 def test_tool_manager_config_defaults_venv_idle_seconds():
-    assert ToolManagerConfig().venv_idle_seconds == 1200.0
+    config = ToolManagerConfig()
+
+    assert config.venv_idle_seconds == 1200.0
+    assert config.rpc_timeout_seconds == 30.0
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_tool_manager_config_rejects_nonpositive_rpc_timeout(value: float):
+    with pytest.raises(ValidationError) as exc_info:
+        ToolManagerConfig.model_validate({"rpc_timeout_seconds": value})
+
+    assert "greater than 0" in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("env", "message"),
+    [
+        ("./requirements.txt", "Invalid PEP 508 requirement"),
+        ("-r requirements.txt", "Invalid PEP 508 requirement"),
+        (["demo-package>=1", "./local"], "Invalid PEP 508 requirement"),
+        ("requirements.txt", "Environment file paths are not supported"),
+        ("pyproject.toml", "Environment file paths are not supported"),
+        ("demo @ ./local", "direct references must use an absolute URL"),
+        ("demo @ file:./local", "direct references must use an absolute URL"),
+        ("demo @ https:relative", "direct references must use an absolute URL"),
+        ("demo @ git+file:./local", "direct references must use an absolute URL"),
+        ("demo @ ftp:relative", "direct references must use an absolute URL"),
+        ("demo @ hg+https:relative", "direct references must use an absolute URL"),
+        (r"demo @ C:\local", "direct references must use an absolute URL"),
+        ("demo-package\n--extra-index-url https://example.com", "line breaks"),
+        ("demo-package\0other-package", "NUL bytes"),
+    ],
+)
+def test_torch_module_config_rejects_non_pep508_environments(env, message):
+    with pytest.raises(ValidationError) as exc_info:
+        TorchModuleConfig(
+            model_class="demo.Tool",
+            name_or_path="demo/model",
+            env=env,
+        )
+
+    assert message in str(exc_info.value)
+
+
+def test_torch_module_config_accepts_pep508_environment_list():
+    config = TorchModuleConfig(
+        model_class="demo.Tool",
+        name_or_path="demo/model",
+        env=["demo-package>=1", "other-package[extra]"],
+    )
+
+    assert config.env == ["demo-package>=1", "other-package[extra]"]
+
+
+def test_torch_module_config_accepts_absolute_direct_reference():
+    requirement = "demo-package @ file:///opt/demo-package"
+
+    config = TorchModuleConfig(
+        model_class="demo.Tool",
+        name_or_path="demo/model",
+        env=requirement,
+    )
+
+    assert config.env == requirement
 
 
 def test_torch_module_config_accepts_legacy_ursa_tool(monkeypatch):

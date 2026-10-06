@@ -2,7 +2,9 @@ import asyncio
 import contextlib
 import gc
 import logging
+import threading
 import time
+import weakref
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -23,6 +25,7 @@ from .model_rpc import ModelProcess, RemoteModel
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
+_DEVICE_MEMORY_SNAPSHOT_SECONDS = 1.0
 
 
 def empty_accelerator_cache() -> None:
@@ -54,6 +57,7 @@ class DeviceSlot:
     current_tool: str | None = None
     tool: TorchModuleTool | None = None
     worker: ModelProcess | None = None
+    worker_tool: str | None = None
     busy: bool = False
     last_used: float = field(default_factory=time.monotonic)
 
@@ -219,10 +223,12 @@ class TorchModelToolManager:
         gc_idle_seconds = config.gc_idle_seconds
         disk_idle_seconds = config.disk_idle_seconds
         venv_idle_seconds = config.venv_idle_seconds
+        rpc_timeout_seconds = config.rpc_timeout_seconds
         self.idle_seconds = idle_seconds
         self.gc_idle_seconds = gc_idle_seconds
         self.disk_idle_seconds = disk_idle_seconds
         self.venv_idle_seconds = venv_idle_seconds
+        self.rpc_timeout_seconds = rpc_timeout_seconds
         max_pending_per_tool = config.max_pending_per_tool
         if max_pending_per_tool is not None and max_pending_per_tool < 1:
             raise ValueError("max_pending_per_tool must be >= 1 or None")
@@ -288,6 +294,15 @@ class TorchModelToolManager:
 
         self._tools: dict[str, ToolState] = {}
         self._inflight_by_tool: dict[str, int] = {}
+        self._worker_memory_cache_lock = threading.Lock()
+        self._worker_memory_snapshots: weakref.WeakKeyDictionary[
+            ModelProcess,
+            dict[str, tuple[float, dict[str, int] | None]],
+        ] = weakref.WeakKeyDictionary()
+        self._worker_memory_locks: weakref.WeakKeyDictionary[
+            ModelProcess,
+            dict[str, threading.Lock],
+        ] = weakref.WeakKeyDictionary()
 
         self._condition = asyncio.Condition()
         self._pending_tools: deque[str] = deque()
@@ -445,12 +460,15 @@ class TorchModelToolManager:
         for task in list(self._tasks):
             task.cancel()
 
+        # Closing workers first unblocks RPC requests that may be waiting for a
+        # response from an unresponsive child.
+        await asyncio.to_thread(self.close_workers)
+
         for task in list(self._tasks):
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
         self._tasks.clear()
-        await asyncio.to_thread(self.close_workers)
 
     def close_workers(self) -> None:
         """Synchronously terminate all model subprocesses owned by slots."""
@@ -458,6 +476,7 @@ class TorchModelToolManager:
             if slot.worker is not None:
                 slot.worker.close()
                 slot.worker = None
+                slot.worker_tool = None
 
     async def __aenter__(self) -> "TorchModelToolManager":
         return self
@@ -619,12 +638,17 @@ class TorchModelToolManager:
             ):
                 should_clear = True
                 activity_at_clear = self._last_server_activity
+                workers = [
+                    slot.worker
+                    for slot in self._device_slots
+                    if slot.worker is not None and slot.worker.alive
+                ]
 
         if should_clear:
             start = time.monotonic()
             status = "ok"
             try:
-                await self._run_blocking(empty_accelerator_cache)
+                await self._run_blocking(self._clear_accelerator_caches, workers)
             except Exception:
                 status = "error"
                 raise
@@ -640,6 +664,20 @@ class TorchModelToolManager:
                             and self._last_server_activity == activity_at_clear
                         ):
                             self._mark_gc_activity_locked()
+
+    @staticmethod
+    def _clear_accelerator_caches(workers: list[ModelProcess]) -> None:
+        empty_accelerator_cache()
+        for worker in workers:
+            try:
+                worker.request("clear_cache")
+            except Exception:
+                logger.warning(
+                    "Failed to clear accelerator cache in model worker %s",
+                    worker.pid,
+                    exc_info=True,
+                )
+                worker.close()
 
     def _mark_server_active_locked(self) -> None:
         self._mark_gc_activity_locked()
@@ -778,10 +816,9 @@ class TorchModelToolManager:
             return
 
         now = time.monotonic() if now is None else now
+        remote_evictions: list[tuple[int, str, float]] = []
         async with self._condition:
             for tool_name, state in self._tools.items():
-                if state.tool is None:
-                    continue
                 if state.loaded_slots or state.assigned_slots:
                     continue
                 if self._inflight_by_tool.get(tool_name, 0):
@@ -793,6 +830,18 @@ class TorchModelToolManager:
                 if idle_time < threshold:
                     continue
 
+                if state.remote is not None:
+                    for index, slot in enumerate(self._device_slots):
+                        if (
+                            slot.worker is not None
+                            and slot.worker_tool == tool_name
+                            and not slot.busy
+                        ):
+                            slot.busy = True
+                            remote_evictions.append((index, tool_name, idle_time))
+                    continue
+                if state.tool is None:
+                    continue
                 state.tool = None
                 nomad_metrics.record_tool_disk_unload(tool_name)
                 state.last_used = now
@@ -801,6 +850,59 @@ class TorchModelToolManager:
                     tool_name,
                     idle_time,
                 )
+
+        for index, tool_name, idle_time in remote_evictions:
+            await self._unload_slot_worker_model(
+                index,
+                tool_name=tool_name,
+                idle_time=idle_time,
+                now=now,
+            )
+
+    async def _unload_slot_worker_model(
+        self,
+        device_index: int,
+        *,
+        tool_name: str,
+        idle_time: float,
+        now: float,
+    ) -> None:
+        slot = self._device_slots[device_index]
+        worker = slot.worker
+        worker_failed = False
+        try:
+            if worker is not None and worker.alive:
+                await self._run_blocking(worker.request, "unload")
+            elif worker is not None:
+                worker_failed = True
+                await self._run_blocking(worker.close)
+        except Exception:
+            worker_failed = True
+            logger.warning(
+                "Failed to unload tool '%s' from model worker",
+                tool_name,
+                exc_info=True,
+            )
+            if worker is not None:
+                await self._run_blocking(worker.close)
+        finally:
+            async with self._condition:
+                slot = self._device_slots[device_index]
+                if slot.worker_tool == tool_name:
+                    slot.worker_tool = None
+                if worker_failed:
+                    slot.worker = None
+                slot.busy = False
+                slot.last_used = now
+                state = self._tools[tool_name]
+                state.last_used = now
+                nomad_metrics.record_tool_disk_unload(tool_name)
+                logger.debug(
+                    "Unloaded subprocess tool '%s' after %.2fs fully offloaded",
+                    tool_name,
+                    idle_time,
+                )
+                self._condition.notify_all()
 
     async def _evict_idle_workers(self, *, now: float | None = None) -> None:
         threshold = self._venv_idle_threshold
@@ -845,6 +947,7 @@ class TorchModelToolManager:
                     slot.current_tool = None
                     slot.tool = None
                 slot.worker = None
+                slot.worker_tool = None
                 slot.busy = False
                 slot.last_used = time.monotonic() if now is None else now
                 self._condition.notify_all()
@@ -1159,12 +1262,26 @@ class TorchModelToolManager:
 
         completed = False
         was_cancelled = False
+        worker_failed = False
         try:
             if worker is not None:
-                _, was_cancelled = await self._finish_non_cancellable(
-                    worker.request,
-                    "offload",
-                )
+                if worker.alive:
+                    try:
+                        _, was_cancelled = await self._finish_non_cancellable(
+                            worker.request,
+                            "offload",
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Model worker failed while offloading '%s'; terminating it",
+                            tool_name,
+                            exc_info=True,
+                        )
+                        worker_failed = True
+                        await self._finish_non_cancellable(worker.close)
+                else:
+                    worker_failed = True
+                    await self._finish_non_cancellable(worker.close)
             elif tool is not None:
                 _, was_cancelled = await self._finish_non_cancellable(
                     self._offload_tool,
@@ -1183,6 +1300,9 @@ class TorchModelToolManager:
                     state.last_used = update_time
                     slot.current_tool = None
                     slot.tool = None
+                    if worker_failed:
+                        slot.worker = None
+                        slot.worker_tool = None
                     slot.last_used = update_time
                     self._mark_gc_activity_locked(now=update_time)
                     if idle_time is not None:
@@ -1206,6 +1326,20 @@ class TorchModelToolManager:
         device_index: int,
     ) -> TorchModuleTool | ModelProcess:
         slot = self._device_slots[device_index]
+        if slot.worker is not None and not slot.worker.alive:
+            dead_worker = slot.worker
+            dead_tool_name = slot.current_tool
+            await self._finish_non_cancellable(dead_worker.close)
+            slot.worker = None
+            slot.worker_tool = None
+            slot.current_tool = None
+            slot.tool = None
+            if dead_tool_name is not None:
+                dead_state = self._tools[dead_tool_name]
+                dead_state.loaded_slots.discard(device_index)
+                if dead_tool_name != tool_name:
+                    dead_state.release_slot(device_index)
+
         if slot.current_tool == tool_name:
             state = self._tools[tool_name]
             if state.remote is not None:
@@ -1232,11 +1366,13 @@ class TorchModelToolManager:
             ):
                 await self._finish_non_cancellable(worker.close)
                 slot.worker = None
+                slot.worker_tool = None
                 worker = None
             if worker is None:
                 worker, was_cancelled = await self._finish_non_cancellable(
                     ModelProcess,
                     remote.environment,
+                    timeout_seconds=self.rpc_timeout_seconds,
                 )
                 slot.worker = worker
                 if was_cancelled:
@@ -1252,6 +1388,7 @@ class TorchModelToolManager:
             )
             start = time.monotonic()
             status = "ok"
+            slot.worker_tool = None
             try:
                 _, was_cancelled = await self._finish_non_cancellable(
                     worker.load,
@@ -1277,6 +1414,7 @@ class TorchModelToolManager:
 
             slot.current_tool = tool_name
             slot.tool = None
+            slot.worker_tool = tool_name
             slot.last_used = time.monotonic()
             state.mark_slot_loaded(
                 device_index,
@@ -1290,6 +1428,7 @@ class TorchModelToolManager:
         if slot.worker is not None:
             await self._finish_non_cancellable(slot.worker.close)
             slot.worker = None
+            slot.worker_tool = None
 
         is_resident_tool = False
         if state.tool is not None and state.resident_slot is None:
@@ -1429,6 +1568,75 @@ class TorchModelToolManager:
             yield Observation(value, self._accelerator_attributes(info))
 
     def _device_memory_value(self, device: torch.device, kind: str) -> int | None:
+        host_value = self._host_device_memory_value(device, kind)
+        total = host_value or 0
+        measured = host_value is not None
+        seen_workers: set[int] = set()
+        for slot in self._device_slots:
+            worker = slot.worker
+            if slot.device != device or worker is None or not worker.alive:
+                continue
+            worker_identity = id(worker)
+            if worker_identity in seen_workers:
+                continue
+            seen_workers.add(worker_identity)
+            values = self._worker_device_memory_values(worker, device)
+            if values is None:
+                continue
+            worker_value = values.get(kind)
+            if isinstance(worker_value, int) and not isinstance(worker_value, bool):
+                total += worker_value
+                measured = True
+        return total if measured else None
+
+    def _worker_device_memory_values(
+        self,
+        worker: ModelProcess,
+        device: torch.device,
+    ) -> dict[str, int] | None:
+        device_key = str(device)
+        with self._worker_memory_cache_lock:
+            worker_locks = self._worker_memory_locks.setdefault(worker, {})
+            snapshot_lock = worker_locks.setdefault(device_key, threading.Lock())
+
+        with snapshot_lock:
+            now = time.monotonic()
+            with self._worker_memory_cache_lock:
+                cached = self._worker_memory_snapshots.get(worker, {}).get(device_key)
+            if cached is not None and now - cached[0] < _DEVICE_MEMORY_SNAPSHOT_SECONDS:
+                return cached[1]
+
+            try:
+                raw_values = worker.request("device_memory", {"device": str(device)})
+            except Exception:
+                logger.debug(
+                    "Failed to read device memory from model worker %s",
+                    worker.pid,
+                    exc_info=True,
+                )
+                values = None
+            else:
+                values = (
+                    {
+                        key: value
+                        for key, value in raw_values.items()
+                        if key in {"allocated", "reserved"}
+                        and isinstance(value, int)
+                        and not isinstance(value, bool)
+                    }
+                    if isinstance(raw_values, dict)
+                    else None
+                )
+            with self._worker_memory_cache_lock:
+                snapshots = self._worker_memory_snapshots.setdefault(worker, {})
+                snapshots[device_key] = (time.monotonic(), values)
+            return values
+
+    @staticmethod
+    def _host_device_memory_value(
+        device: torch.device,
+        kind: str,
+    ) -> int | None:
         if device.type == "cuda":
             index = (
                 device.index

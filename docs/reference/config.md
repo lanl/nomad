@@ -21,6 +21,7 @@ tool_manager:
   gc_idle_seconds: 300
   disk_idle_seconds: 600
   venv_idle_seconds: 1200
+  rpc_timeout_seconds: 30
   max_pending_per_tool: 50000
 search_tool:
   expose: true
@@ -33,7 +34,7 @@ tools:
 fmod_models:
   - model_class: my_package.models.MyTorchTool
     name_or_path: my-org/my-model
-    env: requirements.txt
+    env: my-model-package>=1.2
     tool_name: my-model
     batch_size: 16
 ```
@@ -42,10 +43,10 @@ Use `tools` for regular Python callables and `fmod_models` for
 {py:class}`nomad.fm_base_tool.TorchModuleTool` implementations. `name_or_path`
 can point at several model source types:
 
-Set a model's `env` to a `requirements.txt` path, a `pyproject.toml` path, a
-list of PEP 508 requirements, or one PEP 508 requirement string. Relative file
-paths are resolved from the server configuration file. Nomad installs a
-`pyproject.toml` project together with its dependencies.
+Set a model's `env` to one PEP 508 requirement string or a list of PEP 508
+requirements. `requirements.txt` and `pyproject.toml` paths are not supported.
+Direct references must use absolute URLs, such as
+`my-package @ file:///opt/packages/my-package`.
 
 Models run in per-device Python subprocesses. When `env` is omitted, the
 subprocess uses the same virtual environment and Python executable as the Nomad
@@ -57,7 +58,19 @@ models with the same requirements. Nomad injects the currently running Nomad
 package into each explicit environment's requirements. A slot keeps its
 subprocess when switching between models with the same environment;
 `tool_manager.venv_idle_seconds` controls when an idle subprocess is terminated
-and defaults to 1200 seconds.
+and defaults to 1200 seconds. `tool_manager.rpc_timeout_seconds` limits each
+subprocess request to 30 seconds by default; set it to `null` to disable the
+deadline. Configured model subprocesses always use the manager's device
+assignment and process lifecycle even when the optional `--no-tool-manager`
+switch or `tool_manager.enabled: false` disables direct host-model management.
+
+`nomad export` leaves requirement strings and lists unchanged and builds their
+explicit environments under `<output>/venv` by default, without loading the
+models. Set `NOMAD_CACHE=<output>` when serving the exported config so those
+environments are reused. Build the bundle at its final absolute deployment path
+(for example, `nomad export nomad.yml /opt/nomad`): virtual environments are not
+relocatable and must run with a Python runtime compatible with the one used for
+the export. Pass `--no-venv` to omit them from an export.
 
 | Name | Example |
 | --- | --- |

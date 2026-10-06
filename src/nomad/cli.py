@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Sequence
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -48,6 +49,18 @@ except PackageNotFoundError:  # pragma: no cover - local checkout
 _CODE_MODE_EXEC_CONTEXT_SETTINGS = {
     "allow_extra_args": True,
 }
+
+
+def _manager_lifespan(manager: Any):
+    @asynccontextmanager
+    async def lifespan(_server):
+        try:
+            yield {}
+        finally:
+            if manager is not None:
+                await manager.aclose()
+
+    return lifespan
 
 
 def _normalize_serve_transport(transport: str) -> str:
@@ -165,7 +178,8 @@ def serve(
             "--tool-manager/--no-tool-manager",
             help=(
                 "Enable Nomad's PyTorch tool manager for batching and shared "
-                "accelerator scheduling."
+                "accelerator scheduling. Configured model subprocesses always "
+                "use it for device assignment and process lifetime."
             ),
         ),
     ] = True,
@@ -228,13 +242,6 @@ def serve(
         otlp_endpoint=getattr(telemetry, "otlp_endpoint", None),
     )
 
-    server = FastMCP("nomad", on_duplicate="warn")
-    card_locator = ModelCardLocator()
-    register_model_card_tool(server, card_locator)
-
-    for tool in config.tools:
-        tool.add_to_fastmcp(server)
-
     manager_cfg = config.tool_manager
     use_manager = use_tool_manager and manager_cfg.enabled
     needs_worker_manager = bool(config.fmod_models)
@@ -243,6 +250,17 @@ def serve(
         LOGGER.info("Tool manager disabled by configuration")
 
     manager = manager_cfg.instantiate() if use_manager or needs_worker_manager else None
+    server = FastMCP(
+        "nomad",
+        on_duplicate="warn",
+        lifespan=_manager_lifespan(manager),
+    )
+    card_locator = ModelCardLocator()
+    register_model_card_tool(server, card_locator)
+
+    for tool in config.tools:
+        tool.add_to_fastmcp(server)
+
     LOGGER.info("Visible devices: %s", _format_visible_devices(manager))
     for fm_config in config.fmod_models:
         fm_name = fm_config.tool_name or fm_config.name_or_path
@@ -287,8 +305,6 @@ def serve(
 
         server.run(transport=transport, **run_kwargs)
     finally:
-        if manager is not None and hasattr(manager, "close_workers"):
-            manager.close_workers()
         shutdown_otel()
 
 

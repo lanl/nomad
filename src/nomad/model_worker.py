@@ -4,6 +4,7 @@ import contextlib
 import gc
 import importlib
 import json
+import os
 import sys
 import traceback
 from collections.abc import Mapping
@@ -29,6 +30,14 @@ class ModelWorker:
         if method == "offload":
             self.offload()
             return None
+        if method == "unload":
+            self._discard_tool()
+            return None
+        if method == "clear_cache":
+            self.clear_cache()
+            return None
+        if method == "device_memory":
+            return self.device_memory(params)
         if method == "set_batch_size":
             self._require_tool().batch_size = max(1, int(params["batch_size"]))
             return None
@@ -86,6 +95,46 @@ class ModelWorker:
         except ImportError:  # pragma: no cover
             pass
 
+    @staticmethod
+    def clear_cache() -> None:
+        gc.collect()
+        try:
+            import torch
+        except ImportError:  # pragma: no cover
+            return
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        mps = getattr(torch, "mps", None)
+        if mps is not None and hasattr(mps, "empty_cache"):
+            mps.empty_cache()
+
+    @staticmethod
+    def device_memory(params: Mapping[str, Any]) -> dict[str, int]:
+        try:
+            import torch
+        except ImportError:  # pragma: no cover
+            return {}
+
+        device = torch.device(str(params["device"]))
+        if device.type == "cuda":
+            index = (
+                device.index
+                if device.index is not None
+                else torch.cuda.current_device()
+            )
+            return {
+                "allocated": int(torch.cuda.memory_allocated(index)),
+                "reserved": int(torch.cuda.memory_reserved(index)),
+            }
+        if device.type == "mps":
+            result = {}
+            if hasattr(torch.mps, "current_allocated_memory"):
+                result["allocated"] = int(torch.mps.current_allocated_memory())
+            if hasattr(torch.mps, "driver_allocated_memory"):
+                result["reserved"] = int(torch.mps.driver_allocated_memory())
+            return result
+        return {}
+
     def _discard_tool(self) -> None:
         if self.tool is None:
             return
@@ -126,26 +175,43 @@ def _response(request_id: Any, *, result: Any = None, error: Any = None) -> dict
 
 def main(stdin: TextIO = sys.stdin, stdout: TextIO = sys.stdout) -> int:
     worker = ModelWorker()
-    with contextlib.redirect_stdout(sys.stderr):
-        for line in stdin:
-            request: dict[str, Any] = {}
-            should_stop = False
-            try:
-                request = json.loads(line)
-                method = request.get("method")
-                should_stop = method == "shutdown"
-                result = worker.dispatch(method, request.get("params", {}))
-                response = _response(request.get("id"), result=result)
-            except Exception as exc:  # noqa: BLE001
-                traceback.print_exc(file=sys.stderr)
-                response = _response(
-                    request.get("id"),
-                    error={"code": -32000, "message": str(exc)},
-                )
-            stdout.write(json.dumps(response) + "\n")
-            stdout.flush()
-            if should_stop:
-                break
+    protocol_stdout = stdout
+    close_protocol_stdout = False
+    if stdout is sys.stdout and hasattr(stdout, "fileno"):
+        protocol_fd = os.dup(stdout.fileno())
+        os.dup2(sys.stderr.fileno(), stdout.fileno())
+        protocol_stdout = os.fdopen(
+            protocol_fd,
+            "w",
+            encoding=stdout.encoding or "utf-8",
+            buffering=1,
+        )
+        close_protocol_stdout = True
+
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            for line in stdin:
+                request: dict[str, Any] = {}
+                should_stop = False
+                try:
+                    request = json.loads(line)
+                    method = request.get("method")
+                    should_stop = method == "shutdown"
+                    result = worker.dispatch(method, request.get("params", {}))
+                    response = _response(request.get("id"), result=result)
+                except Exception as exc:  # noqa: BLE001
+                    traceback.print_exc(file=sys.stderr)
+                    response = _response(
+                        request.get("id"),
+                        error={"code": -32000, "message": str(exc)},
+                    )
+                protocol_stdout.write(json.dumps(response) + "\n")
+                protocol_stdout.flush()
+                if should_stop:
+                    break
+    finally:
+        if close_protocol_stdout:
+            protocol_stdout.close()
     return 0
 
 

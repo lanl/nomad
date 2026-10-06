@@ -24,6 +24,22 @@ from nomad.tool_search import register_search_tool
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
+@pytest.mark.asyncio
+async def test_manager_lifespan_closes_manager():
+    class DummyManager:
+        closed = False
+
+        async def aclose(self):
+            self.closed = True
+
+    manager = DummyManager()
+
+    async with nomad_cli._manager_lifespan(manager)(object()):
+        assert manager.closed is False
+
+    assert manager.closed is True
+
+
 def strip_ansi(text: str) -> str:
     return ANSI_ESCAPE_RE.sub("", text)
 
@@ -324,14 +340,16 @@ def test_nomad_cli_code_mode_exec_writes_stdout_when_output_is_dash(
 
 
 @pytest.mark.parametrize(
-    "extra_args, expected_target, expected_oras_registry",
+    "extra_args, expected_target, expected_oras_registry, expected_build_venvs",
     [
-        ([], ExportTarget.DISK, None),
-        (["--to", "https"], ExportTarget.HTTPS, None),
+        ([], ExportTarget.DISK, None, True),
+        (["--no-venv"], ExportTarget.DISK, None, False),
+        (["--to", "https"], ExportTarget.HTTPS, None, True),
         (
             ["--to", "oras", "--oras-registry", "registry.example.com/scifm"],
             ExportTarget.ORAS,
             "registry.example.com/scifm",
+            True,
         ),
     ],
 )
@@ -341,6 +359,7 @@ def test_nomad_cli_export_accepts_targets(
     extra_args: list[str],
     expected_target: ExportTarget,
     expected_oras_registry: str | None,
+    expected_build_venvs: bool,
 ):
     config_path = tmp_path / "nomad.yml"
     config_path.write_text(
@@ -351,13 +370,20 @@ def test_nomad_cli_export_accepts_targets(
     called: dict[str, Any] = {}
 
     def fake_export_models_config(
-        config_path_arg, output_dir_arg, *, to, oras_registry, pin
+        config_path_arg,
+        output_dir_arg,
+        *,
+        to,
+        oras_registry,
+        pin,
+        build_venvs,
     ):
         called["config_path"] = config_path_arg
         called["output_dir"] = output_dir_arg
         called["to"] = to
         called["oras_registry"] = oras_registry
         called["pin"] = pin
+        called["build_venvs"] = build_venvs
         return output_dir_arg / "nomad.yml"
 
     monkeypatch.setattr(nomad_export, "export_models_config", fake_export_models_config)
@@ -376,7 +402,29 @@ def test_nomad_cli_export_accepts_targets(
         "to": expected_target,
         "oras_registry": expected_oras_registry,
         "pin": True,
+        "build_venvs": expected_build_venvs,
     }
+
+
+def test_nomad_cli_export_reports_environment_build_failure(
+    monkeypatch, tmp_path: Path
+):
+    config_path = tmp_path / "nomad.yml"
+    config_path.write_text("fmod_models: []\n", encoding="utf-8")
+
+    def fail_export(*args, **kwargs):
+        raise RuntimeError("model environment installation failed")
+
+    monkeypatch.setattr(nomad_export, "export_models_config", fail_export)
+
+    result = CliRunner().invoke(
+        nomad_cli.app,
+        ["export", str(config_path), str(tmp_path / "bundle")],
+    )
+
+    assert result.exit_code == 1
+    assert "model environment installation failed" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_nomad_cli_export_report(monkeypatch, tmp_path: Path):
@@ -673,7 +721,6 @@ def test_nomad_cli_serve_strict_model_load_failure_exits(monkeypatch, tmp_path: 
     monkeypatch.setattr(
         nomad_cli, "register_model_card_tool", lambda server, locator: None
     )
-
     result = CliRunner().invoke(
         nomad_cli.app,
         ["serve", str(tmp_path / "nomad.yml"), "--transport", "stdio"],
