@@ -21,7 +21,7 @@ from .common.upstream_errors import UpstreamConnectionError
 from .config import ServerConfig
 from .export import export as export_command
 from .gateway import cli as gateway_cli
-from .gateway.config import GatewayConfig
+from .gateway.config import GatewayConfig, GatewayDefaults
 from .gateway.server import CodeModeGateway
 from .logging_utils import configure_root_logging, parse_log_level
 from .model_cards import ModelCardLocator, register_model_card_tool
@@ -80,7 +80,10 @@ def _format_visible_devices(manager: Any) -> str:
     return "none"
 
 
-def _local_nomad_gateway_config(config_path: Path) -> GatewayConfig:
+def _local_nomad_gateway_config(
+    config_path: Path,
+    workspace_root: Path,
+) -> GatewayConfig:
     return GatewayConfig(
         servers={
             "nomad": StdioMCPServer(
@@ -96,7 +99,8 @@ def _local_nomad_gateway_config(config_path: Path) -> GatewayConfig:
                 env=os.environ.copy(),
                 keep_alive=False,
             )
-        }
+        },
+        defaults=GatewayDefaults(workspace_root=workspace_root),
     )
 
 
@@ -120,11 +124,17 @@ def run_code_mode_script(
             raise typer.BadParameter(
                 f"Failed to load gateway config '{config_path}': {exc}"
             ) from exc
+        gateway_config.defaults.workspace_root = directory
     elif nomad_config_path is not None:
-        gateway_config = _local_nomad_gateway_config(nomad_config_path)
+        try:
+            ServerConfig.from_file(nomad_config_path)
+        except ConfigError as exc:
+            raise typer.BadParameter(
+                f"Failed to load Nomad config '{nomad_config_path}': {exc}"
+            ) from exc
+        gateway_config = _local_nomad_gateway_config(nomad_config_path, directory)
     else:  # pragma: no cover - guarded by the CLI
         raise ValueError("A gateway or Nomad server config is required")
-    gateway_config.defaults.workspace_root = directory
     gateway_telemetry = getattr(gateway_config, "telemetry", None)
     configure_otel(
         service_name=getattr(gateway_telemetry, "service_name", "nomad-gateway"),

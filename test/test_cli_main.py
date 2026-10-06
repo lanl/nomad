@@ -80,19 +80,8 @@ def test_nomad_cli_exposes_code_mode(monkeypatch, tmp_path: Path):
 def test_nomad_cli_code_mode_exec_runs_script(monkeypatch, tmp_path: Path):
     called: dict[str, Any] = {}
 
-    def fake_run_code_mode_script(
-        *,
-        config_path,
-        script_path,
-        gateway_log_level,
-        directory=None,
-        script_args=(),
-        nomad_config_path=None,
-    ):
-        called["config_path"] = config_path
-        called["script_path"] = script_path
-        called["gateway_log_level"] = gateway_log_level
-        called["script_args"] = list(script_args)
+    def fake_run_code_mode_script(**kwargs):
+        called.update(kwargs)
         return {
             "result": {"value": 42},
             "tool_calls": [],
@@ -131,19 +120,8 @@ def test_nomad_cli_code_mode_exec_runs_script(monkeypatch, tmp_path: Path):
 def test_nomad_cli_cmx_forwards_args_after_separator(monkeypatch, tmp_path: Path):
     called: dict[str, Any] = {}
 
-    def fake_run_code_mode_script(
-        *,
-        config_path,
-        script_path,
-        gateway_log_level,
-        directory=None,
-        script_args=(),
-        nomad_config_path=None,
-    ):
-        called["config_path"] = config_path
-        called["script_path"] = script_path
-        called["gateway_log_level"] = gateway_log_level
-        called["script_args"] = list(script_args)
+    def fake_run_code_mode_script(**kwargs):
+        called.update(kwargs)
         return {
             "result": None,
             "tool_calls": [],
@@ -182,19 +160,8 @@ def test_nomad_cli_cmx_forwards_args_after_separator(monkeypatch, tmp_path: Path
 def test_nomad_cli_cmx_accepts_local_nomad_config(monkeypatch, tmp_path: Path):
     called: dict[str, Any] = {}
 
-    def fake_run_code_mode_script(
-        *,
-        config_path,
-        script_path,
-        gateway_log_level,
-        directory=None,
-        script_args=(),
-        nomad_config_path=None,
-    ):
-        called["config_path"] = config_path
-        called["nomad_config_path"] = nomad_config_path
-        called["script_path"] = script_path
-        called["script_args"] = list(script_args)
+    def fake_run_code_mode_script(**kwargs):
+        called.update(kwargs)
         return {"result": None, "tool_calls": []}
 
     monkeypatch.setattr(
@@ -227,8 +194,21 @@ def test_nomad_cli_cmx_accepts_local_nomad_config(monkeypatch, tmp_path: Path):
     assert called["script_args"] == ["--sample-flag", "value"]
 
 
-def test_nomad_cli_cmx_config_options_are_mutually_exclusive(
-    monkeypatch, tmp_path: Path
+@pytest.mark.parametrize(
+    ("config_options", "expected_error"),
+    [
+        ([], "One of --config or --nomad-config is required"),
+        (
+            ["--config", "{gateway}", "--nomad-config", "{nomad}"],
+            "--config and --nomad-config are mutually exclusive",
+        ),
+    ],
+)
+def test_nomad_cli_cmx_requires_exactly_one_config(
+    monkeypatch,
+    tmp_path: Path,
+    config_options: list[str],
+    expected_error: str,
 ):
     def fail_run_code_mode_script(**kwargs):
         raise AssertionError("run_code_mode_script should not be called")
@@ -243,39 +223,18 @@ def test_nomad_cli_cmx_config_options_are_mutually_exclusive(
     nomad_config.write_text("tools: []\n", encoding="utf-8")
     script_path = tmp_path / "script.py"
     script_path.write_text("print('hi')\n", encoding="utf-8")
+    options = [
+        option.format(gateway=gateway_config, nomad=nomad_config)
+        for option in config_options
+    ]
 
     result = CliRunner().invoke(
         nomad_cli.app,
-        [
-            "cmx",
-            "--config",
-            str(gateway_config),
-            "--nomad-config",
-            str(nomad_config),
-            str(script_path),
-        ],
+        ["cmx", *options, str(script_path)],
     )
 
     assert result.exit_code != 0
-    assert "--config and --nomad-config are mutually exclusive" in strip_ansi(
-        result.output
-    )
-
-
-def test_nomad_cli_cmx_requires_one_config(monkeypatch, tmp_path: Path):
-    def fail_run_code_mode_script(**kwargs):
-        raise AssertionError("run_code_mode_script should not be called")
-
-    monkeypatch.setattr(
-        nomad_cli, "run_code_mode_script", fail_run_code_mode_script, raising=True
-    )
-    script_path = tmp_path / "script.py"
-    script_path.write_text("print('hi')\n", encoding="utf-8")
-
-    result = CliRunner().invoke(nomad_cli.app, ["cmx", str(script_path)])
-
-    assert result.exit_code != 0
-    assert "One of --config or --nomad-config is required" in strip_ansi(result.output)
+    assert expected_error in strip_ansi(result.output)
 
 
 def test_local_nomad_gateway_config_uses_owned_stdio_server(
@@ -283,10 +242,12 @@ def test_local_nomad_gateway_config_uses_owned_stdio_server(
 ):
     monkeypatch.setenv("NOMAD_CMX_TEST_SENTINEL", "inherited")
     nomad_config = tmp_path / "nomad.yaml"
+    workspace = tmp_path / "workspace"
 
-    gateway_config = nomad_cli._local_nomad_gateway_config(nomad_config)
+    gateway_config = nomad_cli._local_nomad_gateway_config(nomad_config, workspace)
 
     server = gateway_config.servers["nomad"]
+    assert gateway_config.defaults.workspace_root == workspace
     assert isinstance(server, StdioMCPServer)
     assert server.command == sys.executable
     assert server.args == [
@@ -331,12 +292,13 @@ def test_nomad_cli_cmx_runs_script_against_local_nomad_server(tmp_path: Path):
         "}\n",
         encoding="utf-8",
     )
-    output_path = tmp_path / "result.json"
-    subprocess_env = os.environ.copy()
-    existing_pythonpath = subprocess_env.get("PYTHONPATH")
-    subprocess_env["PYTHONPATH"] = os.pathsep.join(
-        part for part in (str(tmp_path), existing_pythonpath) if part
-    )
+    existing_pythonpath = os.environ.get("PYTHONPATH")
+    subprocess_env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(
+            part for part in (str(tmp_path), existing_pythonpath) if part
+        ),
+    }
 
     result = subprocess.run(
         [
@@ -347,7 +309,7 @@ def test_nomad_cli_cmx_runs_script_against_local_nomad_server(tmp_path: Path):
             "--nomad-config",
             str(nomad_config),
             "--output",
-            str(output_path),
+            "-",
             str(script_path),
         ],
         capture_output=True,
@@ -358,40 +320,33 @@ def test_nomad_cli_cmx_runs_script_against_local_nomad_server(tmp_path: Path):
     )
 
     assert result.returncode == 0, result.stderr
-    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    payload = json.loads(result.stdout)
     assert payload["result"]["value"] == "hello_world"
-    with pytest.raises(OSError):
+    with pytest.raises(ProcessLookupError):
         os.kill(payload["result"]["server_pid"], 0)
 
 
-def test_nomad_cli_cmx_reports_invalid_local_config_without_traceback(
-    tmp_path: Path,
-):
+def test_nomad_cli_cmx_validates_local_config_before_startup(tmp_path: Path):
     nomad_config = tmp_path / "invalid-nomad.yaml"
     nomad_config.write_text("tools:\n  - [\n", encoding="utf-8")
     script_path = tmp_path / "script.py"
     script_path.write_text("RESULT = 1\n", encoding="utf-8")
 
-    result = subprocess.run(
+    result = CliRunner().invoke(
+        nomad_cli.app,
         [
-            sys.executable,
-            "-m",
-            "nomad",
             "cmx",
             "--nomad-config",
             str(nomad_config),
             str(script_path),
         ],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=30,
     )
 
-    assert result.returncode != 0
-    assert "Failed to connect to upstream MCP server 'nomad'" in result.stderr
-    assert "RecursionError" not in result.stderr
-    assert "Traceback" not in result.stderr
+    assert result.exit_code != 0
+    output = strip_ansi(result.output)
+    assert "Failed to load Nomad config" in output
+    assert "Failed to connect to upstream MCP server" not in output
+    assert "Traceback" not in output
 
 
 def test_nomad_cli_code_mode_exec_forwards_args_after_separator(
@@ -399,19 +354,8 @@ def test_nomad_cli_code_mode_exec_forwards_args_after_separator(
 ):
     called: dict[str, Any] = {}
 
-    def fake_run_code_mode_script(
-        *,
-        config_path,
-        script_path,
-        gateway_log_level,
-        directory=None,
-        script_args=(),
-        nomad_config_path=None,
-    ):
-        called["config_path"] = config_path
-        called["script_path"] = script_path
-        called["gateway_log_level"] = gateway_log_level
-        called["script_args"] = list(script_args)
+    def fake_run_code_mode_script(**kwargs):
+        called.update(kwargs)
         return {
             "result": None,
             "tool_calls": [],
@@ -483,15 +427,7 @@ def test_nomad_cli_code_mode_exec_rejects_unknown_nomad_option(
 
 
 def test_nomad_cli_code_mode_exec_writes_output(monkeypatch, tmp_path: Path):
-    def fake_run_code_mode_script(
-        *,
-        config_path,
-        script_path,
-        gateway_log_level,
-        directory=None,
-        script_args=(),
-        nomad_config_path=None,
-    ):
+    def fake_run_code_mode_script(**kwargs):
         return {
             "result": None,
             "tool_calls": [{"tool": "add"}],
@@ -531,15 +467,7 @@ def test_nomad_cli_code_mode_exec_writes_output(monkeypatch, tmp_path: Path):
 def test_nomad_cli_code_mode_exec_writes_stdout_when_output_is_dash(
     monkeypatch, tmp_path: Path
 ):
-    def fake_run_code_mode_script(
-        *,
-        config_path,
-        script_path,
-        gateway_log_level,
-        directory=None,
-        script_args=(),
-        nomad_config_path=None,
-    ):
+    def fake_run_code_mode_script(**kwargs):
         return {
             "result": {"value": 42},
             "tool_calls": [],
