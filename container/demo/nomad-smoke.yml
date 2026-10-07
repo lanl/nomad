@@ -1,5 +1,5 @@
 tool_manager:
-  enabled: true
+  task_store_path: /var/cache/nomad/tasks.sqlite3
 search_tool:
   expose: true
 tools:

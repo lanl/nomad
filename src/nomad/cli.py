@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Sequence
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -12,7 +13,6 @@ import typer
 from fastmcp import FastMCP
 from typer.core import TyperCommand
 
-from ._torch_module_compat import add_torch_module_tool_to_fastmcp
 from .common.config_errors import ConfigError
 from .common.upstream_errors import UpstreamConnectionError
 from .config import ServerConfig
@@ -23,11 +23,11 @@ from .gateway.server import CodeModeGateway
 from .logging_utils import configure_root_logging, parse_log_level
 from .model_cards import ModelCardLocator, register_model_card_tool
 from .otel import configure_otel, shutdown_otel
+from .task_extension import NomadTasksExtension
 from .tool_search import register_search_tool
 
 LogLevelName = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 ServeTransport = Literal["stdio", "http", "streamable-http", "streamable_http"]
-
 app = typer.Typer(
     no_args_is_help=True,
     help=(
@@ -160,16 +160,6 @@ def serve(
             ),
         ),
     ] = "stdio",
-    use_tool_manager: Annotated[
-        bool,
-        typer.Option(
-            "--tool-manager/--no-tool-manager",
-            help=(
-                "Enable Nomad's PyTorch tool manager for batching and shared "
-                "accelerator scheduling."
-            ),
-        ),
-    ] = True,
     host: Annotated[
         str,
         typer.Option(
@@ -229,58 +219,81 @@ def serve(
         otlp_endpoint=getattr(telemetry, "otlp_endpoint", None),
     )
 
-    server = FastMCP("nomad", on_duplicate="warn")
-    card_locator = ModelCardLocator()
-    register_model_card_tool(server, card_locator)
-
-    for tool in config.tools:
-        tool.add_to_fastmcp(server)
-
     manager_cfg = config.tool_manager
-    use_manager = use_tool_manager and manager_cfg.enabled
 
-    if not manager_cfg.enabled and use_tool_manager:
-        LOGGER.info("Tool manager disabled by configuration")
+    manager = None
+    try:
+        manager = manager_cfg.instantiate()
+        LOGGER.info("Visible devices: %s", _format_visible_devices(manager))
 
-    manager = manager_cfg.instantiate() if use_manager else None
-    LOGGER.info("Visible devices: %s", _format_visible_devices(manager))
-    for fm_config in config.fmod_models:
-        fm_name = fm_config.tool_name or fm_config.name_or_path
-        try:
-            tool = config.build_tool(fm_config)
+        @asynccontextmanager
+        async def server_lifespan(_server):
+            try:
+                yield
+            finally:
+                if manager is not None:
+                    await manager.aclose()
 
-            source = fm_config.resolve_source(base_dir=config.context_dir)
+        server = FastMCP(
+            "nomad",
+            on_duplicate="warn",
+            lifespan=server_lifespan,
+        )
+        card_locator = ModelCardLocator()
+        register_model_card_tool(server, card_locator)
 
-            LOGGER.info("Registering torch model '%s'", fm_name)
+        for tool_config in config.tools:
+            tool_config.add_to_fastmcp(server)
 
-            if manager:
+        registered_fmod_names: set[str] = set()
+        for fm_config in config.fmod_models:
+            fm_name = fm_config.tool_name or fm_config.name_or_path
+            try:
+                tool = config.build_tool(fm_config)
+
+                source = fm_config.resolve_source(base_dir=config.context_dir)
+
+                LOGGER.info("Registering torch model '%s'", fm_name)
+
                 manager.register_tool(
                     tool.name,
                     tool,
                     source=source,
                 )
-            else:
-                add_torch_module_tool_to_fastmcp(server, tool)
 
-            card_locator.register(
-                tool.name or fm_config.name_or_path,
-                source,
-            )
-        except Exception:
-            LOGGER.exception("Failed to load torch model: `%s`", fm_name)
-            if strict:
-                raise
+                registered_fmod_names.add(tool.name)
 
-    if manager:
+                card_locator.register(
+                    tool.name or fm_config.name_or_path,
+                    source,
+                )
+            except Exception:
+                LOGGER.exception("Failed to load torch model: `%s`", fm_name)
+                if strict:
+                    raise
+
         manager.add_to_fastmcp(server)
 
-    if config.search_tool.expose:
-        register_search_tool(
-            server,
-            search_config=config.search_tool,
-        )
+        if registered_fmod_names:
+            task_store_path = manager_cfg.task_store_path
+            if str(task_store_path) != ":memory:" and not task_store_path.is_absolute():
+                task_store_path = config.context_dir / task_store_path
+            server.add_extension(
+                NomadTasksExtension(
+                    tool_names=registered_fmod_names,
+                    ttl_seconds=manager_cfg.task_ttl_seconds,
+                    max_bytes=manager_cfg.task_max_bytes,
+                    shutdown_timeout_seconds=manager_cfg.task_shutdown_timeout_seconds,
+                    store_path=task_store_path,
+                )
+            )
 
-    try:
+        if config.search_tool.expose:
+            register_search_tool(
+                server,
+                search_config=config.search_tool,
+            )
+
         run_kwargs: dict[str, Any] = {
             "log_level": log_level,
             "show_banner": False,
@@ -296,6 +309,9 @@ def serve(
 
         server.run(transport=transport, **run_kwargs)
     finally:
+        close_manager = getattr(manager, "aclose", None)
+        if close_manager is not None:
+            asyncio.run(close_manager())
         shutdown_otel()
 
 

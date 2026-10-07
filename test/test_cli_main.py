@@ -24,8 +24,27 @@ from nomad.tool_search import register_search_tool
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
+class NoopManager:
+    devices: list[str] = []
+    accelerator_info: list[object] = []
+
+    def add_to_fastmcp(self, server):
+        pass
+
+    async def aclose(self):
+        pass
+
+
 def strip_ansi(text: str) -> str:
     return ANSI_ESCAPE_RE.sub("", text)
+
+
+def test_nomad_cli_serve_has_no_manager_toggle():
+    result = CliRunner().invoke(nomad_cli.app, ["serve", "--help"])
+
+    assert result.exit_code == 0
+    assert "--tool-manager" not in strip_ansi(result.stdout)
+    assert "--no-tool-manager" not in strip_ansi(result.stdout)
 
 
 def test_nomad_cli_exposes_code_mode(monkeypatch, tmp_path: Path):
@@ -343,9 +362,7 @@ def test_nomad_cli_export_accepts_targets(
     expected_oras_registry: str | None,
 ):
     config_path = tmp_path / "nomad.yml"
-    config_path.write_text(
-        "tool_manager: {enabled: true}\ntools: []\nfmod_models: []\n"
-    )
+    config_path.write_text("tool_manager: {}\ntools: []\nfmod_models: []\n")
     output_dir = tmp_path / "bundle"
 
     called: dict[str, Any] = {}
@@ -381,9 +398,7 @@ def test_nomad_cli_export_accepts_targets(
 
 def test_nomad_cli_export_report(monkeypatch, tmp_path: Path):
     config_path = tmp_path / "nomad.yml"
-    config_path.write_text(
-        "tool_manager: {enabled: true}\ntools: []\nfmod_models: []\n"
-    )
+    config_path.write_text("tool_manager: {}\ntools: []\nfmod_models: []\n")
     output_dir = tmp_path / "report"
     called = []
 
@@ -448,9 +463,16 @@ def test_nomad_cli_serve_registers_resolved_model_card_source(
             self.register_calls.append((tool_name, source))
 
     class DummyServer:
+        last_instance = None
+
         def __init__(self, *args, **kwargs):
             self.registered_tools: list[str] = []
+            self.extensions: list[object] = []
             self.transport: str | None = None
+            DummyServer.last_instance = self
+
+        def add_extension(self, extension):
+            self.extensions.append(extension)
 
         def add_tool(self, tool):
             self.registered_tools.append(tool.name)
@@ -465,11 +487,34 @@ def test_nomad_cli_serve_registers_resolved_model_card_source(
         def run(self, *, transport, **kwargs):
             self.transport = transport
 
+    class DummyManager:
+        devices: list[str] = []
+
+        def __init__(self):
+            self.registered: list[tuple[str, Path]] = []
+            self.added_to_fastmcp = False
+
+        def register_tool(self, name, tool, *, source):
+            self.registered.append((name, source))
+
+        def add_to_fastmcp(self, server):
+            self.added_to_fastmcp = True
+
+        async def aclose(self):
+            pass
+
     dummy_fm = DummyModelConfig()
     dummy_locator = DummyLocator()
+    dummy_manager = DummyManager()
     dummy_config = types.SimpleNamespace(
         tools=[],
-        tool_manager=types.SimpleNamespace(enabled=False),
+        tool_manager=types.SimpleNamespace(
+            instantiate=lambda: dummy_manager,
+            task_ttl_seconds=123,
+            task_store_path=Path("state/tasks.sqlite3"),
+            task_max_bytes=456000,
+            task_shutdown_timeout_seconds=5,
+        ),
         fmod_models=[dummy_fm],
         context_dir=tmp_path / "config-dir",
         build_tool=lambda fm: DummyTool(),
@@ -494,6 +539,16 @@ def test_nomad_cli_serve_registers_resolved_model_card_source(
     )
 
     assert result.exit_code == 0
+    extension = DummyServer.last_instance.extensions[0]
+    assert isinstance(extension, nomad_cli.NomadTasksExtension)
+    assert extension._ttl_seconds == 123
+    assert extension._max_bytes == 456000
+    assert extension._shutdown_timeout_seconds == 5
+    assert extension._store.path == str(
+        dummy_config.context_dir / "state/tasks.sqlite3"
+    )
+    assert dummy_manager.added_to_fastmcp is True
+    assert dummy_manager.registered == [("dummy-tool", resolved_model_dir)]
     assert dummy_fm.resolve_calls == [dummy_config.context_dir]
     assert dummy_locator.register_calls == [("dummy-tool", resolved_model_dir)]
 
@@ -539,6 +594,9 @@ def test_nomad_cli_serve_continues_after_model_load_failure(
         def __init__(self, *args, **kwargs):
             pass
 
+        def add_extension(self, extension):
+            pass
+
         def tool(self, **kwargs):
             def decorator(fn):
                 return fn
@@ -561,8 +619,11 @@ def test_nomad_cli_serve_continues_after_model_load_failure(
     dummy_config = types.SimpleNamespace(
         tools=[],
         tool_manager=types.SimpleNamespace(
-            enabled=True,
             instantiate=lambda: manager,
+            task_ttl_seconds=900,
+            task_store_path=tmp_path / "tasks.sqlite3",
+            task_max_bytes=1024 * 1024 * 1024,
+            task_shutdown_timeout_seconds=5,
         ),
         fmod_models=[bad_model, good_model],
         context_dir=tmp_path,
@@ -608,15 +669,24 @@ def test_nomad_cli_serve_strict_model_load_failure_exits(monkeypatch, tmp_path: 
     class DummyManager:
         devices: list[str] = []
 
+        def __init__(self):
+            self.closed = False
+
         def add_to_fastmcp(self, server):
             raise AssertionError(
                 "manager should not be registered after strict failure"
             )
 
+        async def aclose(self):
+            self.closed = True
+
     class DummyServer:
         ran = False
 
         def __init__(self, *args, **kwargs):
+            pass
+
+        def add_extension(self, extension):
             pass
 
         def tool(self, **kwargs):
@@ -628,11 +698,11 @@ def test_nomad_cli_serve_strict_model_load_failure_exits(monkeypatch, tmp_path: 
         def run(self, *, transport, **kwargs):
             DummyServer.ran = True
 
+    manager = DummyManager()
     dummy_config = types.SimpleNamespace(
         tools=[],
         tool_manager=types.SimpleNamespace(
-            enabled=True,
-            instantiate=lambda: DummyManager(),
+            instantiate=lambda: manager,
         ),
         fmod_models=[DummyModelConfig()],
         context_dir=tmp_path,
@@ -659,6 +729,7 @@ def test_nomad_cli_serve_strict_model_load_failure_exits(monkeypatch, tmp_path: 
     assert result.exit_code == 1
     assert isinstance(result.exception, RuntimeError)
     assert DummyServer.ran is False
+    assert manager.closed is True
     assert "Failed to load torch model: `bad`" in result.stderr
 
 
@@ -705,6 +776,9 @@ def test_nomad_cli_serve_continues_after_model_registration_failure(
         def __init__(self, *args, **kwargs):
             pass
 
+        def add_extension(self, extension):
+            pass
+
         def tool(self, **kwargs):
             def decorator(fn):
                 return fn
@@ -720,8 +794,11 @@ def test_nomad_cli_serve_continues_after_model_registration_failure(
     dummy_config = types.SimpleNamespace(
         tools=[],
         tool_manager=types.SimpleNamespace(
-            enabled=True,
             instantiate=lambda: manager,
+            task_ttl_seconds=900,
+            task_store_path=tmp_path / "tasks.sqlite3",
+            task_max_bytes=1024 * 1024 * 1024,
+            task_shutdown_timeout_seconds=5,
         ),
         fmod_models=models,
         context_dir=tmp_path,
@@ -789,7 +866,7 @@ def test_nomad_cli_serve_registers_search_tools_when_enabled(
 
     dummy_config = types.SimpleNamespace(
         tools=[],
-        tool_manager=types.SimpleNamespace(enabled=False),
+        tool_manager=types.SimpleNamespace(instantiate=NoopManager),
         fmod_models=[],
         search_tool=types.SimpleNamespace(expose=True),
     )
@@ -845,7 +922,7 @@ def test_nomad_cli_serve_http_transport_aliases(
 
     dummy_config = types.SimpleNamespace(
         tools=[],
-        tool_manager=types.SimpleNamespace(enabled=False),
+        tool_manager=types.SimpleNamespace(instantiate=NoopManager),
         fmod_models=[],
         search_tool=types.SimpleNamespace(expose=False),
     )
@@ -1033,7 +1110,7 @@ def test_nomad_cli_serve_appends_jsonl_logs(monkeypatch, tmp_path: Path):
 
     dummy_config = types.SimpleNamespace(
         tools=[],
-        tool_manager=types.SimpleNamespace(enabled=False),
+        tool_manager=types.SimpleNamespace(instantiate=NoopManager),
         fmod_models=[],
         search_tool=types.SimpleNamespace(expose=False),
     )
@@ -1059,7 +1136,6 @@ def test_nomad_cli_serve_appends_jsonl_logs(monkeypatch, tmp_path: Path):
                 str(tmp_path / "nomad.yml"),
                 "--transport",
                 "stdio",
-                "--no-tool-manager",
                 "--log-file",
                 str(log_file),
             ],
@@ -1091,7 +1167,7 @@ def test_nomad_cli_serve_uses_default_stderr_log_format(monkeypatch, tmp_path: P
 
     dummy_config = types.SimpleNamespace(
         tools=[],
-        tool_manager=types.SimpleNamespace(enabled=False),
+        tool_manager=types.SimpleNamespace(instantiate=NoopManager),
         fmod_models=[],
         search_tool=types.SimpleNamespace(expose=False),
     )
@@ -1144,7 +1220,6 @@ def test_nomad_cli_serve_logs_visible_devices(monkeypatch, tmp_path: Path):
     dummy_config = types.SimpleNamespace(
         tools=[],
         tool_manager=types.SimpleNamespace(
-            enabled=True,
             instantiate=lambda: DummyManager(),
         ),
         fmod_models=[],

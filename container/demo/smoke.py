@@ -1,12 +1,9 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.12"
-# dependencies = ["typer>=0.15"]
-# ///
+#!/usr/bin/env python
 """Smoke tests for the Nomad demo image and observability Compose stack."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -16,19 +13,16 @@ import urllib.request
 from collections.abc import Callable
 
 import typer
+from mcp import Client
+
+from nomad.task_client import NomadTasksClientExtension, resolve_task
+from nomad.task_protocol import CreateTaskResult
 
 app = typer.Typer(no_args_is_help=True)
 POLL_SECONDS = 5
 MAX_ATTEMPTS = 60
-MIST_CALL = {
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "tools/call",
-    "params": {
-        "name": "mist_models---mist_26p9M_kkgx0omx_qm9",
-        "arguments": {"smi": "CCO"},
-    },
-}
+MIST_TOOL_NAME = "mist_models---mist_26p9M_kkgx0omx_qm9"
+MIST_ARGUMENTS = {"smi": "CCO"}
 
 
 def run(*command: str, env: dict[str, str] | None = None) -> None:
@@ -54,35 +48,40 @@ def wait_for(description: str, check: Callable[[], bool]) -> None:
     raise typer.Exit(1)
 
 
-def call_mist(host: str) -> bool:
-    request = urllib.request.Request(
-        f"http://{host}:38217/mcp",
-        data=json.dumps(MIST_CALL).encode(),
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        },
-        method="POST",
-    )
+async def call_mist(host: str) -> bool:
     try:
-        with urllib.request.urlopen(request, timeout=300) as response:  # noqa: S310
-            for line in response.read().decode().splitlines():
-                if line.startswith("data: "):
-                    payload = json.loads(line.removeprefix("data: "))
-                    result = payload.get("result", {})
-                    return not result.get("isError", False) and bool(
-                        result.get("content")
-                    )
-    except (OSError, json.JSONDecodeError):
+        async with Client(
+            f"http://{host}:38217/mcp",
+            read_timeout_seconds=300,
+            extensions=[NomadTasksClientExtension()],
+        ) as client:
+            created = await client.session.call_tool(
+                MIST_TOOL_NAME,
+                MIST_ARGUMENTS,
+                allow_claimed=True,
+            )
+            if not isinstance(created, CreateTaskResult):
+                typer.echo(
+                    f"MIST call did not negotiate a task: {type(created).__name__}",
+                    err=True,
+                )
+                return False
+            result = await resolve_task(
+                created,
+                client.session,
+                read_timeout_seconds=300,
+            )
+            return not result.is_error and bool(result.content)
+    except Exception as exc:
+        typer.echo(f"MIST task call failed: {type(exc).__name__}: {exc}", err=True)
         return False
-    return False
 
 
 def verify_nomad(host: str) -> None:
     wait_for(
         "Nomad MCP endpoint", lambda: http_status(f"http://{host}:38217/mcp") == 405
     )
-    if not call_mist(host):
+    if not asyncio.run(call_mist(host)):
         typer.echo("MIST model tool call failed", err=True)
         raise typer.Exit(1)
 

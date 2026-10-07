@@ -96,18 +96,24 @@ def test_server_config_resolves_entries(monkeypatch):
             {"tool": f"{module_name}.DummyTool", "tool_kwargs": {"factor": 3}},
         ],
         "tool_manager": {
-            "enabled": True,
             "idle_seconds": 10.0,
             "gc_idle_seconds": 30.0,
             "disk_idle_seconds": 60.0,
             "max_pending_per_tool": 5,
+            "task_ttl_seconds": 12.0,
+            "task_store_path": "state/tasks.sqlite3",
+            "task_max_bytes": 123456,
+            "task_shutdown_timeout_seconds": 4.0,
         },
     }
 
     config = ServerConfig.model_validate(config_data)
 
     assert isinstance(config.tool_manager, ToolManagerConfig)
-    assert config.tool_manager.enabled is True
+    assert config.tool_manager.task_ttl_seconds == 12.0
+    assert config.tool_manager.task_store_path == Path("state/tasks.sqlite3")
+    assert config.tool_manager.task_max_bytes == 123456
+    assert config.tool_manager.task_shutdown_timeout_seconds == 4.0
     assert config.search_tool.expose is False
     assert config.search_tool.weights.prefix_name == 8.0
     manager = config.tool_manager.instantiate()
@@ -138,6 +144,7 @@ def test_server_config_resolves_entries(monkeypatch):
     fm_server = DummyFastMCPServer()
     registered_model_tool = fm_config.add_to_fastmcp(fm_server)
     assert registered_model_tool.name == "dummy_tool"
+    assert registered_model_tool.task_config.mode == "optional"
     assert fm_server.tools == [registered_model_tool]
 
     assert len(config.tools) == 2
@@ -180,7 +187,14 @@ def test_tool_config_registration_raises_for_broken_tool_import():
 
 def test_tool_manager_config_rejects_unknown_options():
     with pytest.raises(ValidationError) as exc_info:
-        ToolManagerConfig.model_validate({"enabled": True, "typo_seconds": 10})
+        ToolManagerConfig.model_validate({"typo_seconds": 10})
+
+    assert "Extra inputs are not permitted" in str(exc_info.value)
+
+
+def test_tool_manager_config_rejects_removed_enabled_toggle():
+    with pytest.raises(ValidationError) as exc_info:
+        ToolManagerConfig.model_validate({"enabled": False})
 
     assert "Extra inputs are not permitted" in str(exc_info.value)
 
@@ -191,9 +205,39 @@ def test_tool_manager_config_rejects_unknown_options():
 )
 def test_tool_manager_config_rejects_negative_seconds(field: str):
     with pytest.raises(ValidationError) as exc_info:
-        ToolManagerConfig.model_validate({"enabled": True, field: -1})
+        ToolManagerConfig.model_validate({field: -1})
 
     assert "greater than or equal to 0" in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("task_ttl_seconds", 0, "greater than 0"),
+        ("task_max_bytes", 1023, "greater than or equal to 1024"),
+        ("task_shutdown_timeout_seconds", -1, "greater than or equal to 0"),
+    ],
+)
+def test_tool_manager_config_rejects_invalid_task_retention(
+    field: str, value: int, message: str
+):
+    with pytest.raises(ValidationError) as exc_info:
+        ToolManagerConfig.model_validate({field: value})
+
+    assert message in str(exc_info.value)
+
+
+def test_tool_manager_config_defaults_to_finite_pending_limit():
+    assert ToolManagerConfig().max_pending_per_tool == 2**16
+    assert ToolManagerConfig().task_ttl_seconds == 900
+    assert ToolManagerConfig().task_store_path == Path(".nomad/tasks.sqlite3")
+    assert ToolManagerConfig().task_max_bytes == 1024 * 1024 * 1024
+    assert ToolManagerConfig().task_shutdown_timeout_seconds == 5
+
+
+def test_tool_manager_config_rejects_unlimited_pending_requests():
+    with pytest.raises(ValidationError):
+        ToolManagerConfig.model_validate({"max_pending_per_tool": None})
 
 
 def test_torch_module_config_accepts_legacy_ursa_tool(monkeypatch):
@@ -310,7 +354,7 @@ def test_server_config_from_file_resolves_relative_model_paths_from_config_dir(
     config_path.write_text(
         "\n".join(
             [
-                "tool_manager: {enabled: true}",
+                "tool_manager: {}",
                 "tools: []",
                 "fmod_models:",
                 f"  - model_class: {module_name}.DummyModel",
@@ -499,7 +543,7 @@ def test_server_config_rejects_legacy_expose_search_tool_flag():
             {
                 "fmod_models": [],
                 "tools": [],
-                "tool_manager": {"enabled": True},
+                "tool_manager": {},
                 "expose_search_tool": True,
             }
         )
@@ -540,7 +584,7 @@ def test_server_config_from_file_wrong_type_describes_expected_shape(
 ):
     config_path = tmp_path / "nomad.yml"
     config_path.write_text(
-        "fmod_models: nope\ntools: []\ntool_manager: {enabled: true}\n",
+        "fmod_models: nope\ntools: []\ntool_manager: {}\n",
         encoding="utf-8",
     )
 
@@ -555,7 +599,7 @@ def test_server_config_from_file_range_error_describes_bound(tmp_path: Path):
     config_path.write_text(
         "fmod_models: []\n"
         "tools: []\n"
-        "tool_manager: {enabled: true}\n"
+        "tool_manager: {}\n"
         "search_tool: {candidate_limit: 0}\n",
         encoding="utf-8",
     )
@@ -574,7 +618,7 @@ def test_server_config_accepts_search_tool_weights():
         {
             "fmod_models": [],
             "tools": [],
-            "tool_manager": {"enabled": True},
+            "tool_manager": {},
             "search_tool": {
                 "expose": True,
                 "candidate_limit": 75,

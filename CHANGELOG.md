@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added optional SciFM background tasks using the MCP Tasks extension, with
+  bounded in-process task retention and cancellation ([#7])
+
+### Breaking
+
+- Migrated to FastMCP v4 and MCP 2, with FastMCP owning MCP telemetry and Nomad retaining domain metrics and child spans ([#7])
+- Replaced the Docket task backend with process-local task state. Remove
+  `task_backend_url`, `task_min_concurrency`, and `device_queue_depth` from
+  `tool_manager` configurations; managed calls now persist their input and
+  terminal response in SQLite. Use `task_store_path`, `task_ttl_seconds`,
+  `task_max_bytes`, and `task_shutdown_timeout_seconds` to configure task
+  storage, retention, and shutdown instead ([#7])
+- Removed the `tool_manager.enabled` setting and the `--no-tool-manager` serve
+  option; model tools always use the manager ([#7])
+
+### Changed
+
+- Changed `max_pending_per_tool` to a finite, non-nullable manager queue limit ([#7])
+
 ## [v0.2.1] - 2026-09-10
 
 ### Changed
@@ -54,6 +75,7 @@ Initial Public Release of Nomad
 [#4]: https://github.com/lanl/nomad/pull/4
 [#5]: https://github.com/lanl/nomad/pull/5
 [#6]: https://github.com/lanl/nomad/pull/6
+[#7]: https://github.com/lanl/nomad/pull/7
 [#8]: https://github.com/lanl/nomad/pull/8
 [#9]: https://github.com/lanl/nomad/pull/9
 [#10]: https://github.com/lanl/nomad/pull/10

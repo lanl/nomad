@@ -219,16 +219,25 @@ class ToolConfig(BaseModel):
 
 
 class ToolManagerConfig(BaseModel):
-    """Configuration for the optional Torch model tool manager."""
-
-    enabled: bool = True
-    """Whether ``nomad serve`` should route model tools through the manager."""
+    """Configuration for the Torch model tool manager."""
 
     idle_seconds: float | None = Field(default=300.0, ge=0)
     """Idle seconds before reducing a tool's device allocation by one slot. ``None`` disables device-slot idle eviction."""
 
-    max_pending_per_tool: int | None = Field(default=None, ge=1)
-    """Maximum queued requests per tool. ``None`` disables the queue limit."""
+    max_pending_per_tool: int = Field(default=2**16, ge=1)
+    """Maximum queued requests per tool."""
+
+    task_ttl_seconds: float = Field(default=900.0, gt=0)
+    """Seconds a persisted MCP task remains available after creation."""
+
+    task_store_path: Path = Path(".nomad/tasks.sqlite3")
+    """SQLite task-state database, resolved relative to the server config file."""
+
+    task_max_bytes: int = Field(default=1024 * 1024 * 1024, ge=1024)
+    """Maximum logical-byte budget for persisted MCP task input and terminal state."""
+
+    task_shutdown_timeout_seconds: float = Field(default=5.0, ge=0)
+    """Seconds to wait for task cancellation during server shutdown."""
 
     max_devices_per_tool: int | None = Field(default=None, ge=1)
     """Maximum device slots one tool may occupy. ``None`` uses all managed slots."""
@@ -253,7 +262,7 @@ class ToolManagerConfig(BaseModel):
         logger.debug("Initializing TorchModelToolManager")
         logger.debug(
             "TorchModelToolManager options: %s",
-            config.model_dump(exclude={"enabled"}),
+            config.model_dump(),
         )
         return TorchModelToolManager(config, device_provider=device_provider)
 

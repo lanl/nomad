@@ -23,7 +23,7 @@ def test_export_models_config_https_rewrites_git_sources_and_normalizes_hf(
     config_path.write_text(
         "\n".join(
             [
-                "tool_manager: {enabled: true}",
+                "tool_manager: {}",
                 "tools: []",
                 "fmod_models:",
                 "  - model_class: tests.DummyModel",
@@ -93,7 +93,7 @@ def test_export_models_config_oras_pushes_sources_and_rewrites_config(
     config_path.write_text(
         "\n".join(
             [
-                "tool_manager: {enabled: true}",
+                "tool_manager: {}",
                 "tools: []",
                 "fmod_models:",
                 "  - model_class: tests.DummyModel",
@@ -158,7 +158,7 @@ def test_export_models_config_rejects_duplicate_generated_tool_names(tmp_path: P
     config_path.write_text(
         "\n".join(
             [
-                "tool_manager: {enabled: true}",
+                "tool_manager: {}",
                 "tools: []",
                 "fmod_models:",
                 "  - model_class: tests.DummyModel",
@@ -215,7 +215,7 @@ def test_export_models_config_oras_requires_registry(tmp_path: Path):
     config_dir.mkdir()
     config_path = config_dir / "nomad.yml"
     config_path.write_text(
-        "tool_manager: {enabled: true}\ntools: []\nfmod_models: []\n",
+        "tool_manager: {}\ntools: []\nfmod_models: []\n",
         encoding="utf-8",
     )
 
@@ -234,7 +234,7 @@ def test_export_model_report_writes_cards_and_linked_descriptions(
     config_path.write_text(
         "\n".join(
             [
-                "tool_manager: {enabled: true}",
+                "tool_manager: {}",
                 "tools:",
                 "  - tool: tests.regular_report_tool",
                 "    name: regular-tool",
