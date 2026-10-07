@@ -16,13 +16,13 @@ Implementation: {repo_file}`src/nomad/common/env.py <src/nomad/common/env.py>`.
 
 ```yaml
 tool_manager:
-  enabled: true
   idle_seconds: 120
   gc_idle_seconds: 300
   disk_idle_seconds: 600
   max_pending_per_tool: 65536
   task_ttl_seconds: 900
-  task_max_records: 65536
+  task_store_path: .nomad/tasks.sqlite3
+  task_max_bytes: 1073741824
   task_shutdown_timeout_seconds: 5
 search_tool:
   expose: true

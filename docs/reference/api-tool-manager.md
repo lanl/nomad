@@ -17,16 +17,30 @@ the same managed-tool callable and enter the same batching and accelerator
 queue, whose per-tool capacity is controlled by
 {py:attr}`~nomad.config.ToolManagerConfig.max_pending_per_tool`.
 
-Task state is deliberately process-local: it survives a client disconnect but
-not a Nomad server restart. Records expire
+Every managed model invocation is first persisted to the SQLite database at
+{py:attr}`~nomad.config.ToolManagerConfig.task_store_path`, then enters the same
+manager queue. A client that negotiates the Tasks extension receives a task
+handle, while a synchronous client waits for that same internal task and its row
+is removed after delivery. Exposed task records survive client disconnects and
+Nomad restarts. Records expire
 {py:attr}`~nomad.config.ToolManagerConfig.task_ttl_seconds` after submission,
-including tasks that are still running, and the registry is capped by
-{py:attr}`~nomad.config.ToolManagerConfig.task_max_records`. The defaults retain
-at most 65,536 task records for 15 minutes. This bounds both background work and
-the result payloads held in memory without requiring a separate task broker.
+including tasks that are still running, and the store is capped by
+{py:attr}`~nomad.config.ToolManagerConfig.task_max_bytes`. Each record stores its
+canonical input JSON and, after completion, one immutable terminal-response JSON
+BLOB. The default 1 GiB logical budget includes both BLOBs plus a 1 KiB terminal
+reservation; the oldest terminal records are evicted before new work is rejected.
 At shutdown, Nomad requests cancellation and waits up to
 {py:attr}`~nomad.config.ToolManagerConfig.task_shutdown_timeout_seconds` before
 continuing server teardown.
+
+The SQLite database preserves terminal results, but active Python execution is
+still process-local. After an unclean restart, interrupted working tasks become
+failed. A multi-process or multi-replica deployment must route `tasks/get`,
+`tasks/update`, and `tasks/cancel` back to the process that owns the database and
+runner. The Python client sets the required
+`Mcp-Name: <taskId>` header on those requests, allowing a compatible proxy or
+load balancer to provide task affinity. Without task-aware routing, deploy one
+serving process per endpoint.
 
 For managed Torch tools, the manager keeps one resident CPU instance when the
 tool is loaded from configuration and may create additional tool instances from

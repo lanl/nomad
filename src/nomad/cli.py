@@ -13,7 +13,6 @@ import typer
 from fastmcp import FastMCP
 from typer.core import TyperCommand
 
-from ._torch_module_compat import add_torch_module_tool_to_fastmcp
 from .common.config_errors import ConfigError
 from .common.upstream_errors import UpstreamConnectionError
 from .config import ServerConfig
@@ -161,16 +160,6 @@ def serve(
             ),
         ),
     ] = "stdio",
-    use_tool_manager: Annotated[
-        bool,
-        typer.Option(
-            "--tool-manager/--no-tool-manager",
-            help=(
-                "Enable Nomad's PyTorch tool manager for batching and shared "
-                "accelerator scheduling."
-            ),
-        ),
-    ] = True,
     host: Annotated[
         str,
         typer.Option(
@@ -231,14 +220,10 @@ def serve(
     )
 
     manager_cfg = config.tool_manager
-    use_manager = use_tool_manager and manager_cfg.enabled
-
-    if not manager_cfg.enabled and use_tool_manager:
-        LOGGER.info("Tool manager disabled by configuration")
 
     manager = None
     try:
-        manager = manager_cfg.instantiate() if use_manager else None
+        manager = manager_cfg.instantiate()
         LOGGER.info("Visible devices: %s", _format_visible_devices(manager))
 
         @asynccontextmanager
@@ -270,14 +255,11 @@ def serve(
 
                 LOGGER.info("Registering torch model '%s'", fm_name)
 
-                if manager:
-                    manager.register_tool(
-                        tool.name,
-                        tool,
-                        source=source,
-                    )
-                else:
-                    add_torch_module_tool_to_fastmcp(server, tool)
+                manager.register_tool(
+                    tool.name,
+                    tool,
+                    source=source,
+                )
 
                 registered_fmod_names.add(tool.name)
 
@@ -290,20 +272,19 @@ def serve(
                 if strict:
                     raise
 
-        if manager:
-            manager.add_to_fastmcp(server)
+        manager.add_to_fastmcp(server)
 
         if registered_fmod_names:
+            task_store_path = manager_cfg.task_store_path
+            if str(task_store_path) != ":memory:" and not task_store_path.is_absolute():
+                task_store_path = config.context_dir / task_store_path
             server.add_extension(
                 NomadTasksExtension(
                     tool_names=registered_fmod_names,
                     ttl_seconds=manager_cfg.task_ttl_seconds,
-                    max_records=manager_cfg.task_max_records,
-                    shutdown_timeout_seconds=getattr(
-                        manager_cfg,
-                        "task_shutdown_timeout_seconds",
-                        5.0,
-                    ),
+                    max_bytes=manager_cfg.task_max_bytes,
+                    shutdown_timeout_seconds=manager_cfg.task_shutdown_timeout_seconds,
+                    store_path=task_store_path,
                 )
             )
 

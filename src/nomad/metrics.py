@@ -49,6 +49,7 @@ except ImportError:
     metrics = _NoopMetrics()
 
 if TYPE_CHECKING:
+    from .task_store import TaskStore
     from .torch_tool_manager import TorchModelToolManager
 
 
@@ -261,6 +262,62 @@ _METRIC_DEFINITIONS = (
         "serve",
     ),
     MetricDefinition(
+        "nomad.task.created",
+        "counter",
+        "{task}",
+        "Persisted MCP tasks created.",
+        "serve",
+    ),
+    MetricDefinition(
+        "nomad.task.requests",
+        "counter",
+        "{request}",
+        "MCP task lifecycle requests received.",
+        "serve",
+    ),
+    MetricDefinition(
+        "nomad.task.outcomes",
+        "counter",
+        "{task}",
+        "MCP tasks reaching a terminal state.",
+        "serve",
+    ),
+    MetricDefinition(
+        "nomad.task.duration",
+        "histogram",
+        "s",
+        "Task duration from creation to a terminal state.",
+        "serve",
+    ),
+    MetricDefinition(
+        "nomad.task.removals",
+        "counter",
+        "{task}",
+        "Task records removed from persistent storage.",
+        "serve",
+    ),
+    MetricDefinition(
+        "nomad.task.rejections",
+        "counter",
+        "{task}",
+        "Task operations rejected by storage resource limits.",
+        "serve",
+    ),
+    MetricDefinition(
+        "nomad.task.active",
+        "observable up/down counter",
+        "{task}",
+        "Tasks currently in a non-terminal state.",
+        "serve",
+    ),
+    MetricDefinition(
+        "nomad.task.retained_bytes",
+        "observable up/down counter",
+        "By",
+        "Serialized-byte budget currently charged to retained task state.",
+        "serve",
+    ),
+    MetricDefinition(
         "nomad.gateway.requests",
         "counter",
         "{request}",
@@ -364,6 +421,12 @@ tool_disk_load_duration = _create_instrument("nomad.tool.disk.load_duration")
 tool_disk_unloads = _create_instrument("nomad.tool.disk.unloads")
 device_cache_clears = _create_instrument("nomad.device.cache_clears")
 device_cache_clear_duration = _create_instrument("nomad.device.cache_clear.duration")
+task_created = _create_instrument("nomad.task.created")
+task_requests = _create_instrument("nomad.task.requests")
+task_outcomes = _create_instrument("nomad.task.outcomes")
+task_duration = _create_instrument("nomad.task.duration")
+task_removals = _create_instrument("nomad.task.removals")
+task_rejections = _create_instrument("nomad.task.rejections")
 gateway_requests = _create_instrument("nomad.gateway.requests")
 gateway_request_duration = _create_instrument("nomad.gateway.request.duration")
 gateway_sandbox_duration = _create_instrument("nomad.gateway.sandbox.duration")
@@ -373,6 +436,7 @@ gateway_upstream_tool_duration = _create_instrument(
 )
 
 _managers: weakref.WeakSet[TorchModelToolManager] = weakref.WeakSet()
+_task_stores: weakref.WeakSet[TaskStore] = weakref.WeakSet()
 
 
 def _device_attributes(device: torch.device) -> dict[str, Any]:
@@ -393,6 +457,32 @@ def tool_device_attributes(tool_name: str, device: torch.device) -> dict[str, An
 
 def register_tool_manager(manager: TorchModelToolManager) -> None:
     _managers.add(manager)
+
+
+def register_task_store(store: TaskStore) -> None:
+    _task_stores.add(store)
+
+
+def record_task_created() -> None:
+    task_created.add(1)
+
+
+def record_task_request(method: str) -> None:
+    task_requests.add(1, {"method": method})
+
+
+def record_task_outcome(status: str, duration_seconds: float) -> None:
+    attributes = {"status": status}
+    task_outcomes.add(1, attributes)
+    task_duration.record(duration_seconds, attributes)
+
+
+def record_task_removal(reason: str) -> None:
+    task_removals.add(1, {"reason": reason})
+
+
+def record_task_rejection(reason: str) -> None:
+    task_rejections.add(1, {"reason": reason})
 
 
 def record_tool_request(tool_name: str) -> None:
@@ -598,6 +688,20 @@ def _device_utilization_observations(_options: CallbackOptions):
         yield from manager.device_utilization_observations()
 
 
+def _task_active_observations(_options: CallbackOptions):
+    yield Observation(
+        sum(store.active_count for store in list(_task_stores)),
+        {},
+    )
+
+
+def _task_retained_bytes_observations(_options: CallbackOptions):
+    yield Observation(
+        sum(store.retained_bytes for store in list(_task_stores)),
+        {},
+    )
+
+
 for _metric_name, _callbacks in (
     ("nomad.tool.queue.length", [_queue_length_observations]),
     ("nomad.tool.inflight.requests", [_inflight_observations]),
@@ -609,6 +713,8 @@ for _metric_name, _callbacks in (
     ("nomad.device.memory.allocated", [_device_memory_allocated_observations]),
     ("nomad.device.memory.reserved", [_device_memory_reserved_observations]),
     ("nomad.device.utilization", [_device_utilization_observations]),
+    ("nomad.task.active", [_task_active_observations]),
+    ("nomad.task.retained_bytes", [_task_retained_bytes_observations]),
 ):
     _definition = _METRIC_DEFINITIONS_BY_NAME[_metric_name]
     if _definition.kind == "observable up/down counter":

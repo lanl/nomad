@@ -1,25 +1,21 @@
-"""In-process implementation of the SEP-2663 MCP Tasks extension."""
+"""SQLite-backed server implementation of the SEP-2663 Tasks extension."""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import secrets
 import time
 from collections.abc import AsyncIterator, Collection, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import mcp_types
 from fastmcp.exceptions import FastMCPError, NotFoundError
-from fastmcp.server.dependencies import (
-    extract_version_spec,
-    get_access_token,
-    get_http_request,
-)
+from fastmcp.server.dependencies import extract_version_spec, get_http_request
 from fastmcp.server.extensions import (
     MethodBinding,
     ServerExtension,
@@ -28,17 +24,39 @@ from fastmcp.server.extensions import (
 from fastmcp.tools.base import InputRequiredToolResult, ToolResult
 from fastmcp.utilities.tasks import TASKS_EXTENSION_ID
 from fastmcp.utilities.versions import VersionSpec
-from mcp.client.extension import ClaimContext, ClientExtension, ResultClaim
 from mcp.server.context import ServerRequestContext
 from mcp.shared.exceptions import MCPError
 from mcp.shared.inbound import MCP_NAME_HEADER, decode_header_value
-from mcp_types import Request, RequestParams, Result
 from mcp_types.jsonrpc import (
     HEADER_MISMATCH,
     MISSING_REQUIRED_CLIENT_CAPABILITY,
 )
-from mcp_types.version import MODERN_PROTOCOL_VERSIONS
-from pydantic import ConfigDict, Field
+
+from . import metrics as nomad_metrics
+from .task_client import NomadTasksClientExtension
+from .task_protocol import (
+    TASKS_PROTOCOL_VERSION,
+    TASKS_PROTOCOL_VERSIONS,
+    CancelTaskParams,
+    CancelTaskRequest,
+    CancelTaskResult,
+    CreateTaskResult,
+    GetTaskParams,
+    GetTaskRequest,
+    GetTaskResult,
+    TaskStatus,
+    UpdateTaskParams,
+    UpdateTaskRequest,
+    UpdateTaskResult,
+)
+from .task_store import (
+    SQLiteTaskStore,
+    StoredTask,
+    TaskCapacityError,
+    TaskStore,
+    now_iso,
+    task_owner_key,
+)
 
 if TYPE_CHECKING:
     from fastmcp.server.context import Context
@@ -46,117 +64,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-TaskStatus = Literal["working", "input_required", "completed", "failed", "cancelled"]
-_TASK_METHOD_VERSIONS = frozenset(MODERN_PROTOCOL_VERSIONS)
-_MIN_POLL_SECONDS = 0.02
 _SERVER_BUSY = -32000
-
-
-class _TaskFields(Result):
-    model_config = ConfigDict(populate_by_name=True)
-
-    task_id: str = Field(alias="taskId")
-    status: TaskStatus
-    created_at: str = Field(alias="createdAt")
-    last_updated_at: str = Field(alias="lastUpdatedAt")
-    ttl_ms: int | None = Field(alias="ttlMs")
-    status_message: str | None = Field(default=None, alias="statusMessage")
-    poll_interval_ms: int | None = Field(default=None, alias="pollIntervalMs")
-
-
-class CreateTaskResult(_TaskFields):
-    """Task handle returned instead of an inline ``tools/call`` result."""
-
-    result_type: Literal["task"] = Field(default="task", alias="resultType")
-
-
-class GetTaskResult(_TaskFields):
-    """Current state returned by ``tasks/get``."""
-
-    result_type: Literal["complete"] = Field(default="complete", alias="resultType")
-    result: dict[str, Any] | None = None
-    error: dict[str, Any] | None = None
-    input_requests: dict[str, Any] | None = Field(
-        default=None,
-        alias="inputRequests",
-    )
-
-
-class UpdateTaskResult(Result):
-    result_type: Literal["complete"] = Field(default="complete", alias="resultType")
-
-
-class CancelTaskResult(Result):
-    result_type: Literal["complete"] = Field(default="complete", alias="resultType")
-
-
-class GetTaskParams(RequestParams):
-    model_config = ConfigDict(populate_by_name=True)
-
-    task_id: str = Field(alias="taskId")
-
-
-CancelTaskParams = GetTaskParams
-
-
-class UpdateTaskParams(RequestParams):
-    model_config = ConfigDict(populate_by_name=True)
-
-    task_id: str = Field(alias="taskId")
-    input_responses: dict[str, Any] = Field(alias="inputResponses")
-
-
-class GetTaskRequest(Request[GetTaskParams, Literal["tasks/get"]]):
-    method: Literal["tasks/get"] = "tasks/get"
-    params: GetTaskParams
-    name_param = "taskId"
-
-
-class UpdateTaskRequest(Request[UpdateTaskParams, Literal["tasks/update"]]):
-    method: Literal["tasks/update"] = "tasks/update"
-    params: UpdateTaskParams
-    name_param = "taskId"
-
-
-class CancelTaskRequest(Request[CancelTaskParams, Literal["tasks/cancel"]]):
-    method: Literal["tasks/cancel"] = "tasks/cancel"
-    params: CancelTaskParams
-    name_param = "taskId"
-
-
-@dataclass(slots=True)
-class _TaskRecord:
-    task_id: str
-    owner: tuple[str | None, str, str | None, str | None] | None
-    created_at: str
-    updated_at: str
-    created_monotonic: float
-    ttl_ms: int
-    poll_interval_ms: int
-    status: TaskStatus = "working"
-    status_message: str | None = None
-    result: dict[str, Any] | None = None
-    error: dict[str, Any] | None = None
-    runner: asyncio.Task[None] | None = None
-
-
-def _now_iso() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def _task_owner() -> tuple[str | None, str, str | None, str | None] | None:
-    token = get_access_token()
-    if token is None:
-        return None
-    claims = token.claims or {}
-    issuer = claims.get("iss")
-    subject = token.subject or claims.get("sub")
-    return (
-        str(issuer) if issuer is not None else None,
-        token.client_id,
-        str(subject) if subject is not None else None,
-        token.resource,
-    )
+_TASK_STORAGE_ERROR = -32000
+_DEFAULT_MAX_BYTES = 1024 * 1024 * 1024
+_DEFAULT_POLL_INTERVAL_MS = 1000
 
 
 def _missing_capability_data() -> dict[str, Any]:
@@ -196,12 +107,30 @@ def _tool_error_payload(error: FastMCPError) -> dict[str, Any]:
     ).model_dump(by_alias=True, mode="json", exclude_none=True)
 
 
-class NomadTasksExtension(ServerExtension):
-    """Run the named model tools as tasks inside this server process.
+def _serialize_input(
+    params: mcp_types.CallToolRequestParams,
+    *,
+    version: str | None,
+) -> bytes:
+    payload: dict[str, Any] = {
+        "method": "tools/call",
+        "params": {
+            "name": params.name,
+            "arguments": params.arguments or {},
+        },
+    }
+    if version is not None:
+        payload["params"]["version"] = version
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
 
-    The explicit name boundary keeps tools that may use multi-round-trip
-    ``input_required`` results on FastMCP's synchronous execution path.
-    """
+
+class NomadTasksExtension(ServerExtension):
+    """Persist and queue every named model call, exposing handles when negotiated."""
 
     identifier = TASKS_EXTENSION_ID
 
@@ -210,23 +139,29 @@ class NomadTasksExtension(ServerExtension):
         *,
         tool_names: Collection[str],
         ttl_seconds: float = 15 * 60,
-        max_records: int = 2**16,
+        max_bytes: int = _DEFAULT_MAX_BYTES,
         shutdown_timeout_seconds: float = 5.0,
+        store_path: str | Path = ":memory:",
+        store: TaskStore | None = None,
     ) -> None:
-        if ttl_seconds <= 0:
-            raise ValueError("ttl_seconds must be greater than zero")
-        if max_records < 1:
-            raise ValueError("max_records must be at least one")
         if shutdown_timeout_seconds < 0:
             raise ValueError("shutdown_timeout_seconds cannot be negative")
+        if store is not None and store_path != ":memory:":
+            raise ValueError("store and store_path cannot both be configured")
         self._tool_names = frozenset(tool_names)
+        self._store = store or SQLiteTaskStore(
+            store_path,
+            ttl_seconds=ttl_seconds,
+            max_bytes=max_bytes,
+        )
         self._ttl_seconds = ttl_seconds
-        self._ttl_ms = max(1, int(ttl_seconds * 1000))
-        self._max_records = max_records
+        self._ttl_ms = self._store.ttl_ms
+        self._max_bytes = max_bytes
         self._shutdown_timeout_seconds = shutdown_timeout_seconds
-        self._records: dict[str, _TaskRecord] = {}
-        self._runners: set[asyncio.Task[None]] = set()
+        self._runners: dict[str, asyncio.Task[None]] = {}
+        self._started_at: dict[str, float] = {}
         self._janitor: asyncio.Task[None] | None = None
+        self._shutting_down = False
 
     def settings(self) -> dict[str, Any]:
         return {}
@@ -237,19 +172,19 @@ class NomadTasksExtension(ServerExtension):
                 method="tasks/get",
                 params_type=GetTaskParams,
                 handler=self._handle_get,
-                protocol_versions=_TASK_METHOD_VERSIONS,
+                protocol_versions=TASKS_PROTOCOL_VERSIONS,
             ),
             MethodBinding(
                 method="tasks/update",
                 params_type=UpdateTaskParams,
                 handler=self._handle_update,
-                protocol_versions=_TASK_METHOD_VERSIONS,
+                protocol_versions=TASKS_PROTOCOL_VERSIONS,
             ),
             MethodBinding(
                 method="tasks/cancel",
                 params_type=CancelTaskParams,
                 handler=self._handle_cancel,
-                protocol_versions=_TASK_METHOD_VERSIONS,
+                protocol_versions=TASKS_PROTOCOL_VERSIONS,
             ),
         )
 
@@ -268,13 +203,15 @@ class NomadTasksExtension(ServerExtension):
             tool = await context.fastmcp.get_tool(params.name, version)
         except NotFoundError:
             tool = None
-        if tool is None or not tool.task_config.supports_tasks():
+        if tool is None:
             return await call_next()
 
+        supports_tasks = tool.task_config.supports_tasks()
         request_context = context.request_context
         opted_in = (
-            request_context is not None
-            and request_context.protocol_version in MODERN_PROTOCOL_VERSIONS
+            supports_tasks
+            and request_context is not None
+            and request_context.protocol_version == TASKS_PROTOCOL_VERSION
             and context.client_extension_settings(TASKS_EXTENSION_ID) is not None
         )
         mode = tool.task_config.mode
@@ -287,109 +224,257 @@ class NomadTasksExtension(ServerExtension):
                 ),
                 data=_missing_capability_data(),
             )
-        if opted_in and mode in {"optional", "required"}:
-            poll_interval = max(
-                _MIN_POLL_SECONDS,
-                tool.task_config.poll_interval.total_seconds(),
-            )
-            return self._create_task(call_next, poll_interval=poll_interval)
-        return await call_next()
 
-    def _create_task(
+        poll_interval_ms = (
+            max(
+                20,
+                int(tool.task_config.poll_interval.total_seconds() * 1000),
+            )
+            if supports_tasks
+            else _DEFAULT_POLL_INTERVAL_MS
+        )
+        await self._prune_expired()
+        record = await self._create_record(
+            params,
+            version=version_str,
+            poll_interval_ms=poll_interval_ms,
+        )
+        if opted_in and mode in {"optional", "required"}:
+            self._start_exposed(record, call_next)
+            return self._create_result(record)
+        return await self._execute_inline(record, call_next)
+
+    async def _create_record(
         self,
-        call_next: ToolCallContinuation,
+        params: mcp_types.CallToolRequestParams,
         *,
-        poll_interval: float,
-    ) -> CreateTaskResult:
-        self._prune_expired()
-        if len(self._records) >= self._max_records:
+        version: str | None,
+        poll_interval_ms: int,
+    ) -> StoredTask:
+        task_id = secrets.token_urlsafe(32)
+        try:
+            record, evicted = await self._store.create(
+                task_id=task_id,
+                owner_key=task_owner_key(),
+                method="tools/call",
+                input_json=_serialize_input(params, version=version),
+                poll_interval_ms=poll_interval_ms,
+            )
+        except TaskCapacityError as exc:
             raise MCPError(
                 code=_SERVER_BUSY,
-                message="Server busy: too many retained tasks",
-            )
+                message="Server busy: task state byte budget exhausted",
+            ) from exc
+        self._started_at[task_id] = time.monotonic()
+        self._cancel_runners(evicted)
+        return record
 
-        task_id = secrets.token_urlsafe(32)
-        created_at = _now_iso()
-        record = _TaskRecord(
-            task_id=task_id,
-            owner=_task_owner(),
-            created_at=created_at,
-            updated_at=created_at,
-            created_monotonic=time.monotonic(),
-            ttl_ms=self._ttl_ms,
-            poll_interval_ms=int(poll_interval * 1000),
-        )
-        self._records[task_id] = record
-        runner = asyncio.create_task(
-            self._execute(record, call_next),
-            name=f"nomad-mcp-task-{task_id}",
-        )
-        record.runner = runner
-        self._runners.add(runner)
-        runner.add_done_callback(self._runners.discard)
-        return self._create_result(record)
-
-    async def _execute(
+    def _start_exposed(
         self,
-        record: _TaskRecord,
+        record: StoredTask,
         call_next: ToolCallContinuation,
     ) -> None:
+        runner = asyncio.create_task(
+            self._execute_exposed(record, call_next),
+            name=f"nomad-mcp-task-{record.task_id}",
+        )
+        self._runners[record.task_id] = runner
+
+        def runner_done(done: asyncio.Task[None]) -> None:
+            if self._runners.get(record.task_id) is done:
+                self._runners.pop(record.task_id, None)
+
+        runner.add_done_callback(runner_done)
+
+    async def _execute_inline(
+        self,
+        record: StoredTask,
+        call_next: ToolCallContinuation,
+    ) -> ToolCallOutcome:
         try:
             outcome = await call_next()
             if isinstance(outcome, InputRequiredToolResult):
                 raise RuntimeError(
-                    "Task-backed tools do not support input-required results"
+                    "Managed model tools do not support input-required results"
                 )
             if not isinstance(outcome, ToolResult):
                 raise RuntimeError(
                     f"Task returned unsupported result {type(outcome).__name__}"
                 )
-            if record.status != "cancelled":
-                record.result = _tool_result_payload(outcome)
-                self._set_status(record, "completed")
+            status = await self._complete(record, _tool_result_payload(outcome))
+            if status != "completed":
+                raise MCPError(
+                    code=_TASK_STORAGE_ERROR,
+                    message="Task result exceeds the task state byte budget",
+                )
+            return outcome
         except asyncio.CancelledError:
-            if record.status == "working":
-                self._set_status(record, "cancelled")
+            if not self._shutting_down:
+                await self._cancel(record)
+            raise
         except MCPError as exc:
-            self._fail_task(
-                record,
-                code=exc.code,
-                message=exc.message,
-                data=exc.data,
-            )
+            if not self._shutting_down:
+                await self._fail(
+                    record,
+                    code=exc.code,
+                    message=exc.message,
+                    data=exc.data,
+                )
+            raise
         except FastMCPError as exc:
-            if record.status != "cancelled":
-                record.result = _tool_error_payload(exc)
-                self._set_status(record, "completed")
+            if not self._shutting_down:
+                await self._complete(record, _tool_error_payload(exc))
+            raise
         except Exception as exc:
-            logger.exception("Background MCP task %s failed", record.task_id)
-            self._fail_task(
-                record,
-                code=mcp_types.INTERNAL_ERROR,
-                message=str(exc) or type(exc).__name__,
-            )
+            if not self._shutting_down:
+                await self._fail(
+                    record,
+                    code=mcp_types.INTERNAL_ERROR,
+                    message=str(exc) or type(exc).__name__,
+                )
+            raise
+        finally:
+            if not self._shutting_down:
+                await self._store.delete(record.task_id, reason="delivered")
+            self._started_at.pop(record.task_id, None)
 
-    def _set_status(self, record: _TaskRecord, status: TaskStatus) -> None:
-        record.status = status
-        record.updated_at = _now_iso()
-
-    def _fail_task(
+    async def _execute_exposed(
         self,
-        record: _TaskRecord,
+        record: StoredTask,
+        call_next: ToolCallContinuation,
+    ) -> None:
+        try:
+            outcome = await call_next()
+            if self._shutting_down:
+                return
+            if isinstance(outcome, InputRequiredToolResult):
+                raise RuntimeError(
+                    "Task-backed model tools do not support input-required results"
+                )
+            if not isinstance(outcome, ToolResult):
+                raise RuntimeError(
+                    f"Task returned unsupported result {type(outcome).__name__}"
+                )
+            await self._complete(record, _tool_result_payload(outcome))
+        except asyncio.CancelledError:
+            if not self._shutting_down:
+                await self._cancel(record)
+        except MCPError as exc:
+            if not self._shutting_down:
+                await self._fail(
+                    record,
+                    code=exc.code,
+                    message=exc.message,
+                    data=exc.data,
+                )
+        except FastMCPError as exc:
+            if not self._shutting_down:
+                await self._complete(record, _tool_error_payload(exc))
+        except Exception as exc:
+            if not self._shutting_down:
+                logger.exception("Background MCP task %s failed", record.task_id)
+                await self._fail(
+                    record,
+                    code=mcp_types.INTERNAL_ERROR,
+                    message=str(exc) or type(exc).__name__,
+                )
+        finally:
+            self._started_at.pop(record.task_id, None)
+
+    async def _complete(
+        self,
+        record: StoredTask,
+        result: dict[str, Any],
+    ) -> TaskStatus:
+        return await self._write_terminal(
+            record,
+            status="completed",
+            result=result,
+        )
+
+    async def _fail(
+        self,
+        record: StoredTask,
         *,
         code: int,
         message: str,
         data: Any = None,
-    ) -> None:
-        if record.status == "cancelled":
-            return
-        record.status_message = message
-        record.error = {"code": code, "message": message}
-        if data is not None:
-            record.error["data"] = data
-        self._set_status(record, "failed")
+    ) -> TaskStatus:
+        return await self._write_terminal(
+            record,
+            status="failed",
+            status_message=message,
+            error=mcp_types.ErrorData(code=code, message=message, data=data),
+        )
 
-    def _create_result(self, record: _TaskRecord) -> CreateTaskResult:
+    async def _cancel(self, record: StoredTask) -> TaskStatus:
+        return await self._write_terminal(record, status="cancelled")
+
+    async def _write_terminal(
+        self,
+        record: StoredTask,
+        *,
+        status: TaskStatus,
+        status_message: str | None = None,
+        result: dict[str, Any] | None = None,
+        error: mcp_types.ErrorData | None = None,
+    ) -> TaskStatus:
+        updated_at = now_iso()
+        terminal = GetTaskResult(
+            task_id=record.task_id,
+            status=status,
+            created_at=record.created_at,
+            last_updated_at=updated_at,
+            ttl_ms=record.ttl_ms,
+            status_message=status_message,
+            poll_interval_ms=record.poll_interval_ms,
+            result=result,
+            error=error,
+        )
+        terminal_json = terminal.model_dump_json(
+            by_alias=True,
+            exclude_none=True,
+        ).encode("utf-8")
+        try:
+            changed, evicted = await self._store.set_terminal(
+                record.task_id,
+                status=status,
+                updated_at=updated_at,
+                terminal_json=terminal_json,
+            )
+        except TaskCapacityError:
+            is_storage_failure = (
+                status == "failed"
+                and error is not None
+                and error.code == _TASK_STORAGE_ERROR
+            )
+            if is_storage_failure:
+                raise
+            message = "Task result exceeds the task state byte budget"
+            return await self._write_terminal(
+                record,
+                status="failed",
+                status_message=message,
+                error=mcp_types.ErrorData(
+                    code=_TASK_STORAGE_ERROR,
+                    message=message,
+                ),
+            )
+
+        self._cancel_runners(evicted)
+        if changed:
+            started_at = self._started_at.get(record.task_id)
+            duration = (
+                max(0.0, time.monotonic() - started_at)
+                if started_at is not None
+                else 0.0
+            )
+            nomad_metrics.record_task_outcome(status, duration)
+            return status
+        current = await self._store.get_any(record.task_id)
+        return current.status if current is not None else status
+
+    def _create_result(self, record: StoredTask) -> CreateTaskResult:
         return CreateTaskResult(
             task_id=record.task_id,
             status=record.status,
@@ -399,40 +484,33 @@ class NomadTasksExtension(ServerExtension):
             poll_interval_ms=record.poll_interval_ms,
         )
 
-    def _get_result(self, record: _TaskRecord) -> GetTaskResult:
-        return GetTaskResult(
-            task_id=record.task_id,
-            status=record.status,
-            created_at=record.created_at,
-            last_updated_at=record.updated_at,
-            ttl_ms=record.ttl_ms,
-            status_message=record.status_message,
-            poll_interval_ms=record.poll_interval_ms,
-            result=record.result,
-            error=record.error,
-        )
-
-    def _lookup(self, task_id: str) -> _TaskRecord:
-        record = self._records.get(task_id)
-        if record is None or record.owner != _task_owner():
+    async def _lookup(self, task_id: str) -> StoredTask:
+        record = await self._store.get(task_id, task_owner_key())
+        if record is None:
             raise _task_not_found(task_id)
-        if self._is_expired(record):
-            self._discard(record)
+        if time.time() >= record.expires_at:
+            await self._store.delete(task_id, reason="expired")
+            self._cancel_runners((task_id,))
             raise _task_not_found(task_id)
         return record
 
-    def _is_expired(self, record: _TaskRecord) -> bool:
-        return time.monotonic() - record.created_monotonic >= self._ttl_seconds
-
-    def _discard(self, record: _TaskRecord) -> None:
-        self._records.pop(record.task_id, None)
-        if record.runner is not None and not record.runner.done():
-            record.runner.cancel()
-
-    def _prune_expired(self) -> None:
-        for record in tuple(self._records.values()):
-            if self._is_expired(record):
-                self._discard(record)
+    @staticmethod
+    def _to_result(record: StoredTask) -> GetTaskResult:
+        if record.terminal_json is not None:
+            return GetTaskResult.model_validate_json(record.terminal_json)
+        if record.status != "working":
+            raise MCPError(
+                code=mcp_types.INTERNAL_ERROR,
+                message=f"Task {record.task_id} has no terminal state",
+            )
+        return GetTaskResult(
+            task_id=record.task_id,
+            status="working",
+            created_at=record.created_at,
+            last_updated_at=record.updated_at,
+            ttl_ms=record.ttl_ms,
+            poll_interval_ms=record.poll_interval_ms,
+        )
 
     def _check_task_request(
         self,
@@ -464,7 +542,8 @@ class NomadTasksExtension(ServerExtension):
         params: GetTaskParams,
     ) -> GetTaskResult:
         self._check_task_request(ctx, params.task_id)
-        return self._get_result(self._lookup(params.task_id))
+        nomad_metrics.record_task_request("get")
+        return self._to_result(await self._lookup(params.task_id))
 
     async def _handle_update(
         self,
@@ -472,9 +551,10 @@ class NomadTasksExtension(ServerExtension):
         params: UpdateTaskParams,
     ) -> UpdateTaskResult:
         self._check_task_request(ctx, params.task_id)
-        self._lookup(params.task_id)
-        # Nomad model tools never enter input_required. SEP-2663 requires unknown
-        # or already-satisfied response keys to be ignored, so this is a no-op.
+        nomad_metrics.record_task_request("update")
+        await self._lookup(params.task_id)
+        # Managed model tools never enter input_required. Unknown or already-
+        # satisfied response keys are ignored as required by SEP-2663.
         return UpdateTaskResult()
 
     async def _handle_cancel(
@@ -483,21 +563,41 @@ class NomadTasksExtension(ServerExtension):
         params: CancelTaskParams,
     ) -> CancelTaskResult:
         self._check_task_request(ctx, params.task_id)
-        record = self._lookup(params.task_id)
+        nomad_metrics.record_task_request("cancel")
+        record = await self._lookup(params.task_id)
         if record.status == "working":
-            self._set_status(record, "cancelled")
-            if record.runner is not None:
-                record.runner.cancel()
+            await self._cancel(record)
+            self._cancel_runners((record.task_id,))
         return CancelTaskResult()
+
+    def _cancel_runners(self, task_ids: Sequence[str]) -> None:
+        for task_id in task_ids:
+            runner = self._runners.get(task_id)
+            if runner is not None and not runner.done():
+                runner.cancel()
+
+    async def _prune_expired(self) -> None:
+        expired = await self._store.prune_expired()
+        self._cancel_runners(expired)
 
     async def _janitor_loop(self) -> None:
         interval = min(60.0, max(0.05, self._ttl_seconds / 2))
         while True:
             await asyncio.sleep(interval)
-            self._prune_expired()
+            await self._prune_expired()
+
+    async def _recover_interrupted(self) -> None:
+        for record in await self._store.list_working():
+            await self._fail(
+                record,
+                code=mcp_types.INTERNAL_ERROR,
+                message="Server restarted before task execution completed",
+            )
 
     @asynccontextmanager
     async def lifespan(self) -> AsyncIterator[None]:
+        await self._prune_expired()
+        await self._recover_interrupted()
         self._janitor = asyncio.create_task(
             self._janitor_loop(),
             name="nomad-mcp-task-janitor",
@@ -505,12 +605,18 @@ class NomadTasksExtension(ServerExtension):
         try:
             yield
         finally:
+            self._shutting_down = True
             if self._janitor is not None:
                 self._janitor.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._janitor
                 self._janitor = None
-            runners = tuple(runner for runner in self._runners if not runner.done())
+
+            for record in await self._store.list_working():
+                await self._cancel(record)
+            runners = tuple(
+                runner for runner in self._runners.values() if not runner.done()
+            )
             for runner in runners:
                 runner.cancel()
             if runners:
@@ -520,84 +626,28 @@ class NomadTasksExtension(ServerExtension):
                 )
                 if pending:
                     logger.warning(
-                        ("%d MCP task runner(s) did not stop within %.3f seconds: %s"),
+                        "%d MCP task runner(s) did not stop within %.3f seconds: %s",
                         len(pending),
                         self._shutdown_timeout_seconds,
                         ", ".join(sorted(runner.get_name() for runner in pending)),
                     )
                     for runner in pending:
                         runner.cancel()
-            self._records.clear()
+            await self._store.close()
 
 
-class NomadTasksClientExtension(ClientExtension):
-    """Transparent Python client support for Nomad's task extension."""
-
-    identifier = TASKS_EXTENSION_ID
-
-    def claims(self) -> Sequence[ResultClaim[Any]]:
-        return (
-            ResultClaim(
-                result_type="task",
-                model=CreateTaskResult,
-                resolve=_resolve_task,
-                protocol_versions=_TASK_METHOD_VERSIONS,
-            ),
-        )
-
-
-async def _resolve_task(
-    created: CreateTaskResult,
-    context: ClaimContext,
-) -> mcp_types.CallToolResult:
-    deadline = (
-        time.monotonic() + context.read_timeout_seconds
-        if context.read_timeout_seconds is not None
-        else None
-    )
-    while True:
-        remaining = None if deadline is None else deadline - time.monotonic()
-        if remaining is not None and remaining <= 0:
-            raise TimeoutError(f"Task {created.task_id} did not complete in time")
-        result = await context.session.send_request(
-            GetTaskRequest(params=GetTaskParams(task_id=created.task_id)),
-            GetTaskResult,
-            request_read_timeout_seconds=remaining,
-        )
-        if result.status == "completed":
-            if result.result is None:
-                raise MCPError(
-                    code=mcp_types.INTERNAL_ERROR,
-                    message=f"Task {created.task_id} completed without a result",
-                )
-            return mcp_types.CallToolResult.model_validate(result.result)
-        if result.status == "failed":
-            error = result.error or {
-                "code": mcp_types.INTERNAL_ERROR,
-                "message": result.status_message or "Task failed",
-            }
-            raise MCPError(
-                code=int(error.get("code", mcp_types.INTERNAL_ERROR)),
-                message=str(error.get("message", "Task failed")),
-                data=error.get("data"),
-            )
-        if result.status == "cancelled":
-            raise MCPError(
-                code=_SERVER_BUSY, message=f"Task {created.task_id} cancelled"
-            )
-        if result.status == "input_required":
-            raise MCPError(
-                code=mcp_types.INTERNAL_ERROR,
-                message="Nomad tasks do not support input-required execution",
-            )
-        delay = max(
-            _MIN_POLL_SECONDS,
-            (result.poll_interval_ms or created.poll_interval_ms or 1000) / 1000,
-        )
-        if deadline is not None:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError(f"Task {created.task_id} did not complete in time")
-            await asyncio.sleep(min(delay, remaining))
-        else:
-            await asyncio.sleep(delay)
+__all__ = [
+    "CancelTaskParams",
+    "CancelTaskRequest",
+    "CancelTaskResult",
+    "CreateTaskResult",
+    "GetTaskParams",
+    "GetTaskRequest",
+    "GetTaskResult",
+    "NomadTasksClientExtension",
+    "NomadTasksExtension",
+    "TaskStatus",
+    "UpdateTaskParams",
+    "UpdateTaskRequest",
+    "UpdateTaskResult",
+]

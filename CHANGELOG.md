@@ -17,9 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migrated to FastMCP v4 and MCP 2, with FastMCP owning MCP telemetry and Nomad retaining domain metrics and child spans ([#7])
 - Replaced the Docket task backend with process-local task state. Remove
   `task_backend_url`, `task_min_concurrency`, and `device_queue_depth` from
-  `tool_manager` configurations; use `task_ttl_seconds`, `task_max_records`,
-  and `task_shutdown_timeout_seconds` to configure task retention and shutdown
-  instead ([#7])
+  `tool_manager` configurations; managed calls now persist their input and
+  terminal response in SQLite. Use `task_store_path`, `task_ttl_seconds`,
+  `task_max_bytes`, and `task_shutdown_timeout_seconds` to configure task
+  storage, retention, and shutdown instead ([#7])
+- Removed the `tool_manager.enabled` setting and the `--no-tool-manager` serve
+  option; model tools always use the manager ([#7])
 
 ### Changed
 

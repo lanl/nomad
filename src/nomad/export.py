@@ -255,7 +255,7 @@ def export_models_config(
     """Export local assets and rewrite ``nomad.yml`` for the requested target."""
     config_path = config_path.expanduser()
     config = ServerConfig.from_file(config_path)
-    exported_data = config.model_dump(mode="python", exclude_none=True)
+    exported_data = config.model_dump(mode="json", exclude_none=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     used_names: set[str] = set()

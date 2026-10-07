@@ -1,11 +1,4 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.12"
-# dependencies = [
-#     "mcp>=2.0.0,<3.0",
-#     "typer>=0.15",
-# ]
-# ///
+#!/usr/bin/env python
 """Smoke tests for the Nomad demo image and observability Compose stack."""
 
 from __future__ import annotations
@@ -21,6 +14,9 @@ from collections.abc import Callable
 
 import typer
 from mcp import Client
+
+from nomad.task_client import NomadTasksClientExtension, resolve_task
+from nomad.task_protocol import CreateTaskResult
 
 app = typer.Typer(no_args_is_help=True)
 POLL_SECONDS = 5
@@ -57,10 +53,27 @@ async def call_mist(host: str) -> bool:
         async with Client(
             f"http://{host}:38217/mcp",
             read_timeout_seconds=300,
+            extensions=[NomadTasksClientExtension()],
         ) as client:
-            result = await client.call_tool(MIST_TOOL_NAME, MIST_ARGUMENTS)
+            created = await client.session.call_tool(
+                MIST_TOOL_NAME,
+                MIST_ARGUMENTS,
+                allow_claimed=True,
+            )
+            if not isinstance(created, CreateTaskResult):
+                typer.echo(
+                    f"MIST call did not negotiate a task: {type(created).__name__}",
+                    err=True,
+                )
+                return False
+            result = await resolve_task(
+                created,
+                client.session,
+                read_timeout_seconds=300,
+            )
             return not result.is_error and bool(result.content)
-    except Exception:
+    except Exception as exc:
+        typer.echo(f"MIST task call failed: {type(exc).__name__}: {exc}", err=True)
         return False
 
 

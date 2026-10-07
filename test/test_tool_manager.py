@@ -567,9 +567,8 @@ async def test_managed_fastmcp_tool_runs_as_background_task(
             extensions=[NomadTasksClientExtension()],
         ) as client:
             result = await client.call_tool(tool_name, {"value": 41})
-            assert {record.status for record in task_extension._records.values()} == {
-                "completed"
-            }
+            records = await task_extension._store.list_tasks()
+            assert {record.status for record in records} == {"completed"}
     finally:
         await manager.aclose()
 
