@@ -16,10 +16,12 @@ Implementation: {repo_file}`src/nomad/common/env.py <src/nomad/common/env.py>`.
 
 ```yaml
 tool_manager:
-  enabled: true
   idle_seconds: 120
   gc_idle_seconds: 300
   disk_idle_seconds: 600
+  venv_idle_seconds: 1200
+  rpc_timeout_seconds: 30
+  build_envs: true
   max_pending_per_tool: 50000
 search_tool:
   expose: true
@@ -32,6 +34,7 @@ tools:
 fmod_models:
   - model_class: my_package.models.MyTorchTool
     name_or_path: my-org/my-model
+    env: my-model-package>=1.2
     tool_name: my-model
     batch_size: 16
 ```
@@ -39,6 +42,36 @@ fmod_models:
 Use `tools` for regular Python callables and `fmod_models` for
 {py:class}`nomad.fm_base_tool.TorchModuleTool` implementations. `name_or_path`
 can point at several model source types:
+
+Set a model's `env` to one requirement string or a list of them. Requirements
+use the standard
+[dependency specifier](https://packaging.python.org/en/latest/specifications/dependency-specifiers/)
+format (PEP 508), the same one `pip install` and `pyproject.toml` dependencies
+use. For example:
+
+- `my-package>=1.2,<2`: a version range from the package index.
+- `my-package[gpu]==1.2`: with an optional extra.
+- `my-package @ file:///opt/packages/my-package`: a local checkout, wheel, or
+  sdist (a direct reference).
+- `my-package @ git+https://example.org/my-org/my-package.git@v1.2`: a Git
+  revision.
+
+`requirements.txt` and `pyproject.toml` paths are not supported. Direct
+references must use absolute URLs.
+
+:::{warning}
+Use `env` for every model you intend to deploy. A model may instead set
+`python` to an existing interpreter (mutually exclusive with `env`), but this
+is unsupported outside local development: Nomad does not build, pin, or export
+that environment, so the server is not deployable.
+:::
+
+Nomad builds, caches, and runs each model's environment in the tool manager;
+see {doc}`api-tool-manager` for how that works and for the related
+`tool_manager` settings.
+
+For how `nomad export` bundles `env` environments for deployment, see
+{doc}`Offline Container Images </deployments/offline-images>`.
 
 | Name | Example |
 | --- | --- |

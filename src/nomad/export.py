@@ -6,19 +6,23 @@ from enum import StrEnum
 from functools import cached_property
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 from uuid import uuid4
 
 import click
 import typer
 import yaml
 from fastmcp.tools import Tool as FastMCPTool
+from packaging.requirements import Requirement
 
 from nomad.common.config_errors import ConfigError
 from nomad.common.name_sanitize import sanitize_export_name, sanitize_mcp_name
-from nomad.config import ServerConfig
+from nomad.config import ServerConfig, TorchModuleConfig
 from nomad.hub import RepoSpec
 from nomad.logging_utils import configure_root_logging, parse_log_level
 from nomad.model_cards import ModelCardLocator
+from nomad.model_env import ModelEnvironment, copy_local_source
 
 LogLevelName = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 LOGGER = logging.getLogger(__name__)
@@ -244,6 +248,93 @@ def _validate_unique_tool_names(raw_models: list[Any]) -> None:
         used_tool_names[mcp_name] = (index, tool_name)
 
 
+def _build_exported_model_environments(
+    models: list[TorchModuleConfig],
+    *,
+    base_dir: Path,
+    cache_root: Path,
+) -> None:
+    """Materialize explicit model environments inside an export bundle."""
+    for model in models:
+        if model.env is None:
+            continue
+        environment = model.resolve_environment(base_dir=base_dir)
+        assert isinstance(environment, ModelEnvironment)
+        environment.ensure(cache_root=cache_root)
+
+
+def _bundle_local_packages(
+    raw_models: list[Any],
+    models: list[TorchModuleConfig],
+    *,
+    output_dir: Path,
+) -> list[TorchModuleConfig]:
+    """Copy local ``file:`` packages in ``env`` into ``<output>/packages``.
+
+    Each such requirement is rewritten, in the exported config and in the
+    returned models, to point at its copy, so the bundle does not depend on
+    sources outside it. Extras and markers are kept. A package shared by
+    several requirements is copied once.
+
+    Args:
+        raw_models: The exported ``fmod_models`` entries, rewritten in place.
+        models: The validated models, in the same order as ``raw_models``.
+        output_dir: The export directory.
+
+    Returns:
+        ``models`` with ``env`` pointing at the bundled copies.
+    """
+    packages_dir = output_dir.resolve() / "packages"
+    used_names: set[str] = set()
+    copies: dict[Path, Path] = {}
+
+    def bundle(requirement: str) -> str:
+        parsed = Requirement(requirement)
+        if parsed.url is None or urlsplit(parsed.url).scheme != "file":
+            return requirement
+        source = Path(url2pathname(urlsplit(parsed.url).path))
+        if not source.exists():
+            raise ValueError(f"Local package for {requirement!r} not found: {source}")
+        if source not in copies:
+            # Keep a file's own name: installers read a wheel's or sdist's
+            # metadata from it.
+            directory = packages_dir / _choose_unique_name(
+                parsed.name, used_names=used_names
+            )
+            copies[source] = directory / source.name if source.is_file() else directory
+            LOGGER.info("Bundling local package %s", source)
+            copy_local_source(source, copies[source])
+        parsed.url = copies[source].as_uri()
+        return str(parsed)
+
+    bundled_models: list[TorchModuleConfig] = []
+    for raw_entry, model in zip(raw_models, models, strict=True):
+        if model.env is None or not isinstance(raw_entry, dict):
+            bundled_models.append(model)
+            continue
+        if isinstance(model.env, str):
+            env: str | list[str] = bundle(model.env)
+        else:
+            env = [bundle(requirement) for requirement in model.env]
+        raw_entry["env"] = env
+        bundled_models.append(model.model_copy(update={"env": env}))
+    return bundled_models
+
+
+def _reject_existing_interpreters(models: list[TorchModuleConfig]) -> None:
+    """Refuse to export models that run in an external ``python`` interpreter.
+
+    Nomad neither builds nor bundles such an interpreter, so an export could
+    never be self-contained; fail before doing any work instead.
+    """
+    names = [model.tool_name or model.name_or_path for model in models if model.python]
+    if names:
+        raise ValueError(
+            "nomad export does not support models that set python: "
+            f"({', '.join(names)}); use env for deployment"
+        )
+
+
 def export_models_config(
     config_path: Path,
     output_dir: Path,
@@ -251,10 +342,12 @@ def export_models_config(
     to: ExportTarget = ExportTarget.DISK,
     oras_registry: str | None = None,
     pin: bool = True,
+    build_venvs: bool = True,
 ) -> Path:
     """Export local assets and rewrite ``nomad.yml`` for the requested target."""
     config_path = config_path.expanduser()
     config = ServerConfig.from_file(config_path)
+    _reject_existing_interpreters(config.fmod_models)
     exported_data = config.model_dump(mode="python", exclude_none=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -264,6 +357,18 @@ def export_models_config(
     )
 
     raw_models = exported_data.get("fmod_models", []) or []
+    models = _bundle_local_packages(
+        raw_models, config.fmod_models, output_dir=output_dir
+    )
+    if build_venvs:
+        _build_exported_model_environments(
+            models,
+            base_dir=config.context_dir,
+            cache_root=output_dir,
+        )
+        # The bundle now carries every env: environment, so the exported server
+        # must never build one at run time (which would need network access).
+        exported_data.setdefault("tool_manager", {})["build_envs"] = False
     entry_exports, source_exports = _collect_model_exports(
         raw_models,
         base_dir=config.context_dir,
@@ -315,13 +420,13 @@ def export_model_report(config_path: Path, output_dir: Path) -> Path:
     used_names: set[str] = set()
 
     for fm_config in config.fmod_models:
-        tool = config.build_tool(fm_config)
+        tool = config.build_remote(fm_config)
         assert tool.name is not None
         if tool.name in used_names:
             raise ValueError(f"Duplicate model tool name '{tool.name}' in report")
         used_names.add(tool.name)
 
-        source = fm_config.resolve_source(base_dir=config.context_dir)
+        source = Path(tool.source)
         locator.register(tool.name, source)
         card_path = output_dir / f"{tool.name}.md"
         card_path.write_text(locator.read_model_card(tool.name), encoding="utf-8")
@@ -413,14 +518,23 @@ def export(
             help="Export model cards and a linked README instead of a deployment bundle.",
         ),
     ] = False,
+    venv: Annotated[
+        bool,
+        typer.Option(
+            "--venv/--no-venv",
+            help="Build explicit model environments under `<output>/venv`.",
+        ),
+    ] = True,
 ):
     """Create a deployment bundle from a Nomad config.
 
     Nomad copies or downloads every configured model into `<output>/models` and
-    writes a rewritten `<output>/nomad.yml`. Use `--to https` to keep remote
-    models remote while rewriting git+ssh sources to git+https transport. Use
-    `--to oras --oras-registry REGISTRY/REPOSITORY` to push models to ORAS and
-    rewrite the config to pinned ORAS artifact URIs.
+    builds explicit model environments under `<output>/venv`, then writes a
+    rewritten `<output>/nomad.yml`. Use `--no-venv` to skip environment
+    construction. Use `--to https` to keep remote models remote while rewriting
+    git+ssh sources to git+https transport. Use `--to oras --oras-registry
+    REGISTRY/REPOSITORY` to push models to ORAS and rewrite the config to pinned
+    ORAS artifact URIs.
     """
     numeric_level = parse_log_level(log_level)
     configure_root_logging(stderr_level=numeric_level)
@@ -430,9 +544,14 @@ def export(
             export_model_report(config, output)
         else:
             export_models_config(
-                config, output, to=to, oras_registry=oras_registry, pin=pin
+                config,
+                output,
+                to=to,
+                oras_registry=oras_registry,
+                pin=pin,
+                build_venvs=venv,
             )
     except ConfigError as exc:
         raise click.ClickException(f"Failed to load config: {exc}") from exc
-    except ValueError as exc:
+    except (RuntimeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc

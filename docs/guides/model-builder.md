@@ -85,9 +85,10 @@ deployment rules and packaging constraints live in the
 
 ## Create an Importable Package
 
-`nomad serve` loads your class or function by dotted import path, so that exact
-symbol must be importable in the same Python environment that launches the
-server.
+`nomad serve` loads your class or function by dotted import path in the
+model's own Python environment, which Nomad builds from the model's `env`
+requirements. List your package in `env`, so that exact symbol is importable
+there.
 
 Minimal repository shape:
 
@@ -106,8 +107,15 @@ To quickly check, from the top-level `./my_pkg` directory, run:
 uv run python -c "from my_pkg.mcp import MyModelTool; print(MyModelTool)"
 ```
 
-For local development, install your package into the same environment you use
-to run `nomad serve`. For demo deployments, that environment is defined by
+For local development, set `env` to a PEP 508 direct reference to your
+checkout, such as `my-pkg @ file:///absolute/path/to/my_pkg`. Nomad installs
+`env` into a cached model-specific environment and rebuilds it when your
+package's files change. The field accepts one PEP 508 requirement string or a
+list of them; requirements and project file paths are not supported, and direct
+references must use absolute URLs.
+
+For demo deployments without an explicit model `env`, the host environment is
+defined by
 {repo_file}`container/demo/pyproject.toml <container/demo/pyproject.toml>`,
 so your package must be added there as a pinned dependency. If the package
 comes from another repository or a local checkout, also add a matching
@@ -260,6 +268,7 @@ If you are serving one SciFM, start with a complete `nomad.yml` like this:
 fmod_models:
   - model_class: my_pkg.mcp.MyModelTool
     name_or_path: my-org/my-model-v2
+    env: my-pkg==1.2
     tool_name: my-model-v2
     batch_size: 32
 ```
@@ -609,12 +618,17 @@ the {doc}`Nomad Inference notebook </guides/nomad_inference>`.
 If you are wiring a new model into the repository's demo deployment scaffold,
 update these files together:
 
-- {repo_file}`container/demo/pyproject.toml <container/demo/pyproject.toml>`:
-  add your model package to `dependencies`, and add or update the matching
-  `[tool.uv.sources]` entry if the package comes from Git or a local checkout.
 - {repo_file}`container/demo/nomad.yml <container/demo/nomad.yml>`:
-  add your `fmod_models` entry, plus any helper `tools` entries and
-  `tool_manager` settings needed for batching or queue depth.
+  add your `fmod_models` entry with `env` set to your model package, for
+  example a Git direct reference such as
+  `my-pkg @ git+https://example.org/my-org/my-pkg.git@v1.2`. Nomad builds that
+  model its own environment, so its dependencies never touch the demo's. Add
+  any helper `tools` entries and `tool_manager` settings needed for batching
+  or queue depth.
+- {repo_file}`container/demo/pyproject.toml <container/demo/pyproject.toml>`:
+  only for code that runs in the server's own environment, such as `tools`
+  callables. Add the package to `dependencies`, with a matching
+  `[tool.uv.sources]` entry if it comes from Git or a local checkout.
 - {repo_file}`container/model-card.md <container/model-card.md>`:
   use this template when you are shipping a local model directory that needs a
   model card in the exported bundle.
