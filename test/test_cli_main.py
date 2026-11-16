@@ -526,6 +526,9 @@ def test_nomad_cli_serve_continues_after_model_load_failure(
         def add_to_fastmcp(self, server):
             self.added_to_fastmcp = True
 
+        async def aclose(self):
+            pass
+
     class DummyLocator:
         def __init__(self):
             self.registered: list[tuple[str, Path]] = []
@@ -613,6 +616,9 @@ def test_nomad_cli_serve_strict_model_load_failure_exits(monkeypatch, tmp_path: 
                 "manager should not be registered after strict failure"
             )
 
+        async def aclose(self):
+            pass
+
     class DummyServer:
         ran = False
 
@@ -691,6 +697,9 @@ def test_nomad_cli_serve_continues_after_model_registration_failure(
 
         def add_to_fastmcp(self, server):
             self.added_to_fastmcp = True
+
+        async def aclose(self):
+            pass
 
     class DummyLocator:
         def __init__(self):
@@ -791,6 +800,7 @@ def test_nomad_cli_serve_registers_search_tools_when_enabled(
         tools=[],
         tool_manager=types.SimpleNamespace(enabled=False),
         fmod_models=[],
+        context_dir=tmp_path,
         search_tool=types.SimpleNamespace(expose=True),
     )
 
@@ -847,6 +857,7 @@ def test_nomad_cli_serve_http_transport_aliases(
         tools=[],
         tool_manager=types.SimpleNamespace(enabled=False),
         fmod_models=[],
+        context_dir=tmp_path,
         search_tool=types.SimpleNamespace(expose=False),
     )
 
@@ -1035,6 +1046,7 @@ def test_nomad_cli_serve_appends_jsonl_logs(monkeypatch, tmp_path: Path):
         tools=[],
         tool_manager=types.SimpleNamespace(enabled=False),
         fmod_models=[],
+        context_dir=tmp_path,
         search_tool=types.SimpleNamespace(expose=False),
     )
 
@@ -1093,6 +1105,7 @@ def test_nomad_cli_serve_uses_default_stderr_log_format(monkeypatch, tmp_path: P
         tools=[],
         tool_manager=types.SimpleNamespace(enabled=False),
         fmod_models=[],
+        context_dir=tmp_path,
         search_tool=types.SimpleNamespace(expose=False),
     )
 
@@ -1141,6 +1154,9 @@ def test_nomad_cli_serve_logs_visible_devices(monkeypatch, tmp_path: Path):
         def add_to_fastmcp(self, server):
             pass
 
+        async def aclose(self):
+            pass
+
     dummy_config = types.SimpleNamespace(
         tools=[],
         tool_manager=types.SimpleNamespace(
@@ -1148,6 +1164,7 @@ def test_nomad_cli_serve_logs_visible_devices(monkeypatch, tmp_path: Path):
             instantiate=lambda: DummyManager(),
         ),
         fmod_models=[],
+        context_dir=tmp_path,
         search_tool=types.SimpleNamespace(expose=False),
     )
 
