@@ -1,13 +1,15 @@
 import asyncio
 import json
 import logging
-import os
 import threading
 from collections.abc import Sequence
 from dataclasses import asdict
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
+
+if TYPE_CHECKING:
+    from .torch_tool_manager import TorchModelToolManager
 
 import click
 import typer
@@ -205,10 +207,12 @@ def _register_specific_tools(
         for name in registered_fmod_names:
             if name in manager._tools:
                 state = manager._tools[name]
-                fast_tool = add_torch_module_tool_to_fastmcp(
+                add_torch_module_tool_to_fastmcp(
                     server,
                     state.tool,
-                    invoke=lambda args, tool_name=name: manager.call_tool(tool_name, args),
+                    invoke=lambda args, tool_name=name: manager.call_tool(
+                        tool_name, args
+                    ),
                 )
             else:
                 LOGGER.warning("Tool %s not in manager._tools", name)
@@ -248,24 +252,13 @@ async def _watch_config(
 
         last_mtime = current_mtime
         LOGGER.info("Config file changed, reloading...")
-        try:
-            current_mtime = config_path.stat().st_mtime
-        except FileNotFoundError:
-            LOGGER.warning("Config file not found: %s", config_path)
-            continue
-
-        if current_mtime <= last_mtime:
-            continue
-
-        last_mtime = current_mtime
-        LOGGER.info("Config file changed, reloading...")
 
         try:
             new_config = ServerConfig.from_file(config_path)
         except ConfigError as exc:
             LOGGER.error("Failed to load new config: %s", exc)
             continue
-        except Exception as exc:
+        except Exception:
             LOGGER.exception("Unexpected error loading config")
             continue
 
@@ -275,7 +268,9 @@ async def _watch_config(
         manager_cfg = new_config.tool_manager
         new_use_manager = use_tool_manager and manager_cfg.enabled
 
-        if new_use_manager != (manager is not None) or (manager is not None and manager_cfg != current_config.tool_manager):
+        if new_use_manager != (manager is not None) or (
+            manager is not None and manager_cfg != current_config.tool_manager
+        ):
             LOGGER.info("Tool manager config changed, recreating manager")
             if manager:
                 await manager.aclose()
@@ -310,9 +305,11 @@ async def _watch_config(
             old_fm = old_fmod_map[key]
             new_fm = new_fmod_map[key]
             # Compare relevant config fields that would require reloading the model
-            if (old_fm.model_class != new_fm.model_class or
-                old_fm.name_or_path != new_fm.name_or_path or
-                old_fm.batch_size != new_fm.batch_size):
+            if (
+                old_fm.model_class != new_fm.model_class
+                or old_fm.name_or_path != new_fm.name_or_path
+                or old_fm.batch_size != new_fm.batch_size
+            ):
                 changed_fmod.add(key)
 
         # For regular tools, only detect added/removed (not changes)
@@ -333,12 +330,28 @@ async def _watch_config(
             # Unregister changed tools first
             _unregister_tools(server, manager, card_locator, changed)
             # Then register them with new config
-            _register_specific_tools(new_config, server, manager, card_locator, strict, new_config.context_dir, changed)
+            _register_specific_tools(
+                new_config,
+                server,
+                manager,
+                card_locator,
+                strict,
+                new_config.context_dir,
+                changed,
+            )
 
         if added:
             LOGGER.info("Adding tools: %s", added)
             # Only register the newly added tools, not all tools from new_config
-            _register_specific_tools(new_config, server, manager, card_locator, strict, new_config.context_dir, added)
+            _register_specific_tools(
+                new_config,
+                server,
+                manager,
+                card_locator,
+                strict,
+                new_config.context_dir,
+                added,
+            )
 
         # Update search tool if config changed
         if new_config.search_tool.expose != current_config.search_tool.expose:
@@ -532,17 +545,17 @@ def serve(
     if not manager_cfg.enabled and use_tool_manager:
         LOGGER.info("Tool manager disabled by configuration")
 
-    from .torch_tool_manager import TorchModelToolManager
     manager = manager_cfg.instantiate() if use_manager else None
     LOGGER.info("Visible devices: %s", _format_visible_devices(manager))
 
     # Set up hot-swapping if requested
-    watch_task = None
     manager_ref = [manager]  # Mutable reference for _watch_config
 
     try:
         # Register initial tools
-        registered_fmod_names = _register_tools(config_obj, server, manager, card_locator, strict, config_obj.context_dir)
+        _register_tools(
+            config_obj, server, manager, card_locator, strict, config_obj.context_dir
+        )
 
         if config_obj.search_tool.expose:
             register_search_tool(
@@ -555,19 +568,22 @@ def serve(
 
         if watch:
             import threading
+
             watch_stop_event = threading.Event()
 
             def run_watch_task():
-                asyncio.run(_watch_config(
-                    config_path=config,
-                    server=server,
-                    manager_ref=manager_ref,
-                    card_locator=card_locator,
-                    use_tool_manager=True,
-                    strict=strict,
-                    interval=watch_interval,
-                    stop_event=watch_stop_event,
-                ))
+                asyncio.run(
+                    _watch_config(
+                        config_path=config,
+                        server=server,
+                        manager_ref=manager_ref,
+                        card_locator=card_locator,
+                        use_tool_manager=True,
+                        strict=strict,
+                        interval=watch_interval,
+                        stop_event=watch_stop_event,
+                    )
+                )
 
             watch_thread = threading.Thread(target=run_watch_task, daemon=True)
             watch_thread.start()
