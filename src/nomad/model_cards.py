@@ -26,6 +26,10 @@ class ModelCardLocator:
         """Associate a tool name with its resolved local path or repo id."""
         self._sources[tool_name] = source
 
+    def unregister(self, tool_name: str) -> None:
+        """Remove a model card registration."""
+        self._sources.pop(tool_name, None)
+
     def registered_tools(self) -> Iterable[str]:
         return self._sources.keys()
 
